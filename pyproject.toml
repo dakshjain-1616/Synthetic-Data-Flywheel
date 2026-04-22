@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "synthetic-data-flywheel"
+version = "0.1.0"
+description = "A closed-loop autonomous pipeline for synthetic training data generation"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Synthetic Data Flywheel Team"}
+]
+keywords = ["synthetic-data", "llm", "training", "flywheel", "ml"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "httpx>=0.25.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "jinja2>=3.1.0",
+    "datasets>=2.14.0",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+flywheel = "synthetic_data_flywheel.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/synthetic-data-flywheel/synthetic-data-flywheel"
+Repository = "https://github.com/synthetic-data-flywheel/synthetic-data-flywheel"
+Documentation = "https://synthetic-data-flywheel.readthedocs.io"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
