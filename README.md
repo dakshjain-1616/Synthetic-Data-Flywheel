@@ -1,545 +1,555 @@
-# 🔄 Synthetic Data Flywheel
+# Synthetic Data Flywheel
 
-**Made Autonomously Using [NEO - Your Autonomous AI Engineering Agent](https://heyneo.com)**
+A closed-loop pipeline for generating, filtering, labeling, and exporting synthetic instruction-tuning data - with an LLM-as-judge filter, statistical judge calibration, and an A2A-protocol agent surface for multi-agent orchestration.
 
-[![VS Code Extension](https://img.shields.io/badge/VS%20Code-NEO%20Extension-blue?logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=NeoResearchInc.heyneo)
-[![Cursor Extension](https://img.shields.io/badge/Cursor-NEO%20Extension-blue?logo=cursor)](https://marketplace.cursorapi.com/items/?itemName=NeoResearchInc.heyneo)
+You bring seed prompts (or an existing dataset). The flywheel generates candidate pairs, scores them with a local or remote judge, calibrates the judge against human labels, exports clean training data, and optionally hands the filtered set to Unsloth for fine-tuning on a free Colab GPU. Failure cases from one cycle become seeds for the next.
 
-A closed-loop autonomous pipeline that generates synthetic training pairs from a base model, filters them using a local LLM judge, trains a new model, evaluates it, and feeds failure cases back as seeds for the next cycle — continuously improving without human labeling.
+Runs on CPU for everything except the optional training step.
 
-## 🏗️ Architecture
+---
+
+## Install
+
+Python >= 3.11.
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Seeds     │────▶│  Generator  │────▶│   Judge     │
-│  (Prompts)  │     │(OpenRouter) │     │  (Ollama)   │
-└─────────────┘     └─────────────┘     └──────┬──────┘
-       ▲                                     │
-       │                                     ▼
-       │                              ┌─────────────┐
-       │                              │   Filter    │
-       │                              └──────┬──────┘
-       │                                     │
-       │                                     ▼
-       │                              ┌─────────────┐
-       │                              │   Dataset   │
-       │                              │   Manager   │
-       │                              └──────┬──────┘
-       │                                     │
-       │                                     ▼
-       │                              ┌─────────────┐
-       │                              │   Trainer   │
-       │                              │  (Unsloth)  │
-       │                              └──────┬──────┘
-       │                                     │
-       │                                     ▼
-       │                              ┌─────────────┐
-       │                              │  Evaluator  │
-       │                              └──────┬──────┘
-       │                                     │
-       └─────────────────────────────────────┘
-              (Failure Seeds Feedback Loop)
-```
-
-### Flywheel Cycle Visualization
-
-<svg width="100%" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
-  <text x="400" y="25" font-size="20" font-weight="bold" text-anchor="middle" fill="#333">Synthetic Data Flywheel Cycle</text>
-  
-  <!-- Center point -->
-  <circle cx="400" cy="200" r="140" fill="none" stroke="#ddd" stroke-width="2" stroke-dasharray="5,5"/>
-  
-  <!-- Step 1: Seeds (Top Left) -->
-  <g>
-    <circle cx="280" cy="100" r="35" fill="#4CAF50" stroke="#333" stroke-width="2"/>
-    <text x="280" y="100" font-size="12" font-weight="bold" text-anchor="middle" fill="white">1. Seeds</text>
-    <text x="280" y="115" font-size="10" text-anchor="middle" fill="white">(Prompts)</text>
-  </g>
-  
-  <!-- Step 2: Generate (Top Right) -->
-  <g>
-    <circle cx="520" cy="100" r="35" fill="#2196F3" stroke="#333" stroke-width="2"/>
-    <text x="520" y="100" font-size="12" font-weight="bold" text-anchor="middle" fill="white">2. Generate</text>
-    <text x="520" y="115" font-size="10" text-anchor="middle" fill="white">(OpenRouter)</text>
-  </g>
-  
-  <!-- Step 3: Judge (Right) -->
-  <g>
-    <circle cx="580" cy="200" r="35" fill="#FF9800" stroke="#333" stroke-width="2"/>
-    <text x="580" y="200" font-size="12" font-weight="bold" text-anchor="middle" fill="white">3. Judge</text>
-    <text x="580" y="215" font-size="10" text-anchor="middle" fill="white">(Ollama)</text>
-  </g>
-  
-  <!-- Step 4: Filter (Bottom Right) -->
-  <g>
-    <circle cx="520" cy="300" r="35" fill="#9C27B0" stroke="#333" stroke-width="2"/>
-    <text x="520" y="300" font-size="12" font-weight="bold" text-anchor="middle" fill="white">4. Filter</text>
-    <text x="520" y="315" font-size="10" text-anchor="middle" fill="white">(Quality)</text>
-  </g>
-  
-  <!-- Step 5: Train (Bottom Left) -->
-  <g>
-    <circle cx="280" cy="300" r="35" fill="#F44336" stroke="#333" stroke-width="2"/>
-    <text x="280" y="300" font-size="12" font-weight="bold" text-anchor="middle" fill="white">5. Train</text>
-    <text x="280" y="315" font-size="10" text-anchor="middle" fill="white">(Unsloth)</text>
-  </g>
-  
-  <!-- Step 6: Evaluate (Left) -->
-  <g>
-    <circle cx="220" cy="200" r="35" fill="#00BCD4" stroke="#333" stroke-width="2"/>
-    <text x="220" y="200" font-size="12" font-weight="bold" text-anchor="middle" fill="white">6. Evaluate</text>
-    <text x="220" y="215" font-size="10" text-anchor="middle" fill="white">(Metrics)</text>
-  </g>
-  
-  <!-- Arrows between steps (clockwise) -->
-  <defs>
-    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-      <polygon points="0 0, 10 3, 0 6" fill="#333"/>
-    </marker>
-  </defs>
-  
-  <!-- 1 to 2 -->
-  <line x1="310" y1="115" x2="490" y2="115" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
-  
-  <!-- 2 to 3 -->
-  <path d="M 550 130 Q 580 160 580 170" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
-  
-  <!-- 3 to 4 -->
-  <path d="M 560 230 Q 550 260 530 270" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
-  
-  <!-- 4 to 5 -->
-  <line x1="490" y1="285" x2="310" y2="285" stroke="#333" stroke-width="2" marker-end="url(#arrowhead)"/>
-  
-  <!-- 5 to 6 -->
-  <path d="M 250 270 Q 220 240 220 230" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
-  
-  <!-- 6 to 1 -->
-  <path d="M 240 170 Q 260 130 270 115" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
-  
-  <!-- Feedback loop (failures back to seeds) -->
-  <path d="M 220 165 Q 150 150 150 100 Q 150 70 280 70" stroke="#E91E63" stroke-width="3" fill="none" stroke-dasharray="5,5" marker-end="url(#arrowhead-pink)"/>
-  <text x="130" y="120" font-size="11" fill="#E91E63" font-weight="bold">Failure Seeds</text>
-  <text x="130" y="135" font-size="10" fill="#E91E63">Feedback Loop</text>
-  
-  <!-- Marker for pink arrow -->
-  <defs>
-    <marker id="arrowhead-pink" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-      <polygon points="0 0, 10 3, 0 6" fill="#E91E63"/>
-    </marker>
-  </defs>
-</svg>
-
-## 📦 Installation
-
-### Prerequisites
-
-- Python 3.10+
-- [OpenRouter API key](https://openrouter.ai/keys) for generation
-- [Ollama](https://ollama.ai/) installed locally for judging
-
-### Install from Source
-
-```bash
-git clone https://github.com/yourusername/synthetic-data-flywheel.git
+git clone https://github.com/dakshjain-1616/synthetic-data-flywheel
 cd synthetic-data-flywheel
-pip install -e ".[dev]"
+pip install -e .
 ```
 
-### Environment Setup
+Installs the `flywheel` CLI plus the library under `synthetic_data_flywheel`.
 
-Copy the example environment file and fill in your API keys:
+---
 
-```bash
-cp .env.example .env
+## Quickstart
+
+The quickest end-to-end run uses a small existing JSONL of pairs and a local Ollama judge.
+
+1. Start Ollama and pull a judge model (Gemma 4 is the reference):
+
+   ```
+   ollama pull gemma4
+   ```
+
+2. Initialize directories and ingest a dataset:
+
+   ```
+   $ flywheel init
+   Synthetic Data Flywheel Initialized
+   Data Directory: ./data
+   Checkpoint Directory: ./data/checkpoints
+   Report Directory: ./reports
+   Directories created successfully
+
+   $ flywheel ingest -i demo.jsonl -n demo --tag demo1
+   Ingested 8 pairs -> data/user/demo.jsonl
+   ```
+
+3. Validate, judge with Ollama, auto-label, compare, calibrate, visualize:
+
+   ```
+   flywheel validate -d demo --checks schema,length,dedup,pii --write-clean data/user/demo.clean.jsonl
+   flywheel judge    -d demo --backend ollama --model gemma4:latest --tag v1
+   flywheel label    -d demo --mode auto-from-judge --judgments data/judgments/demo.v1.jsonl
+   flywheel calibrate -d demo --tag v1
+   flywheel visualize -d demo
+   ```
+
+4. Export a train/val split of the pairs that passed the judge:
+
+   ```
+   flywheel dataset export demo \
+     --to data/exports/demo.jsonl \
+     --judgments data/judgments/demo.v1.jsonl \
+     --filter "scores['overall'] >= 7" \
+     --split train=0.8,val=0.2
+   ```
+
+All of the above run on CPU. Only the optional fine-tuning notebook (`notebooks/training_cycle_*.ipynb`) requires a GPU - see Limitations below.
+
+---
+
+## CLI reference
+
+`flywheel --help` lists the command groups. Every command has `--help` with full flag docs.
+
+```
+$ flywheel --help
+Usage: flywheel [OPTIONS] COMMAND [ARGS]...
+
+  Synthetic Data Flywheel - Autonomous data generation pipeline.
+
+Commands:
+  calibrate  Measure judge 'passed' against human labels (precision/recall/F1).
+  compare    Compare two+ judgment runs (Cohen's kappa, agreement, ...).
+  dataset    Dataset management: ls | info | export.
+  ingest     Ingest a user dataset into the flywheel's JSONL format.
+  init       Initialize flywheel configuration.
+  judge      Judge a dataset with an LLM-as-judge backend.
+  label      Label a dataset: interactive/bulk/auto-from-judge.
+  pipeline   Run declarative YAML pipelines.
+  report     Generate HTML report from checkpoints.
+  run        Run the synthetic data flywheel.
+  status     Show current flywheel status.
+  validate   Validate a dataset and write a ValidationReport.
+  visualize  Render a suite of PNG charts + index.html for a dataset.
 ```
 
-Edit `.env` with your credentials:
+### init
 
-```env
-# OpenRouter (for generation)
-OPENROUTER_API_KEY=your_openrouter_key_here
-OPENROUTER_MODEL=qwen/qwen3-8b
+Creates `./data`, `./data/checkpoints`, `./reports`.
 
-# Ollama (for judging)
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=gemma4
+### ingest
 
-# HuggingFace (optional, for dataset upload)
-HF_TOKEN=your_hf_token_here
+Load a dataset of `(instruction, [input,] output)` triples into the flywheel format.
+
+```
+flywheel ingest -i path/to/file.jsonl -n my_dataset
+flywheel ingest -i data.csv           -n my_dataset -f csv
+flywheel ingest -i hf://tatsu-lab/alpaca -n alpaca --limit 500 --hf-split train
+flywheel ingest -i data.jsonl -n aliased --map "instruction=prompt,output=completion"
+flywheel ingest -i data.jsonl -n x --dry-run
 ```
 
-## 🚀 Quick Start
+Writes `data/user/<name>.jsonl` plus `data/user/<name>.meta.json`.
 
-### 1. Initialize the Flywheel
+### validate
 
-```bash
-flywheel init
+Runs deterministic checks over a dataset: `schema`, `length`, `dedup`, `pii`, `lang`, `profanity`. Produces a JSON report and optionally a cleaned copy.
+
+```
+$ flywheel validate -d demo --checks schema,length,dedup,pii --write-clean data/user/demo.clean.jsonl
+      Validation: demo
+  Total pairs       8
+  pii               1
+  severity:warning  1
+Report: data/validation/demo.report.json
+Clean dataset written (8 pairs): data/user/demo.clean.jsonl
 ```
 
-### 2. Run the Flywheel
+`--fail-on error|warning|never` lets you gate CI on issues.
 
-```bash
-flywheel run --seeds "Explain quantum computing,Write a poem about AI,What is machine learning?"
+### judge
+
+LLM-as-judge scoring with a pluggable backend (`ollama`, `openrouter`, `anthropic`). Reads the rubric from `rubrics/default.yaml` if present, else the built-in default.
+
+```
+$ flywheel judge -d demo --backend ollama --model gemma4:latest --tag v1 --max-pairs 3
+Judging 3 pairs with ollama:gemma4:latest
+  Judged                3
+  Passed                0 (0.0%)
+  Avg overall (scored)  5.00
+  Output                data/judgments/demo.v1.jsonl
+  Cache                 hits=0 misses=3 writes=3
 ```
 
-### 3. Check Status
+Flags: `--concurrency`, `--max-pairs`, `--sample 0.2`, `--no-cache`, `--rubric path/to/rubric.yaml`, `--tag v2`. Judgments are cached on disk keyed by `(backend, model, pair.id, rubric.name@version)`. Judge timeouts are governed by `JUDGE_TIMEOUT` (default 600s - large local models can take over two minutes on first call).
 
-```bash
-flywheel status
+### label
+
+Three modes:
+
+```
+flywheel label -d demo --mode interactive
+flywheel label -d demo --mode bulk --where "output != ''" --set-status approved --tag ok
+flywheel label -d demo --mode auto-from-judge --judgments data/judgments/demo.v1.jsonl --reject-below 3.5
 ```
 
-### 4. Generate Report
+Labels are stored append-only as `data/labels/<dataset>.jsonl` (latest-wins per pair).
 
-```bash
-flywheel report
+### compare
+
+Two or more judgment runs, same dataset - reports pass-agreement, Cohen's kappa, and Pearson correlation on the overall score.
+
+```
+$ flywheel compare -d demo --tags judge_a,judge_b
+        Judge comparison: judge_a vs judge_b
+  Common pairs          8
+  judge_a passed / mean 6 / 7.44
+  judge_b passed / mean 6 / 7.19
+  Pass agreement        100.0%
+  Cohen's kappa (p/f)   1.000  (near-perfect)
+  Score Pearson r       0.965
+  Output                reports/demo/compare.json
 ```
 
-## 📖 Usage
+### calibrate
 
-### CLI Commands
+Treats human labels (`status == approved`) as ground truth and measures the judge's precision / recall / F1 / accuracy.
 
-```bash
-# Run with custom settings
-flywheel run \
-  --seeds "seed1,seed2,seed3" \
-  --max-cycles 5 \
-  --checkpoint-dir ./my-checkpoints
-
-# Resume from checkpoint
-flywheel run --seeds "seed1" --resume
-
-# Generate HTML report
-flywheel report --output ./reports
-
-# Show current status
-flywheel status --checkpoint-dir ./checkpoints
+```
+$ flywheel calibrate -d demo --tag judge_a --approved-is approved
+  Evaluated pairs  8
+  Precision        1.000
+  Recall           0.750
+  F1               0.857
+  Accuracy         0.750
+  TP/FP/TN/FN      6/0/0/2
 ```
 
-### Data Platform Commands
+### visualize
 
-Beyond the flywheel loop, `flywheel` ships CLI subcommands for a full
-training-data workflow over *your own* data. The example below has been
-verified end-to-end against a local Ollama (`gemma4:latest`).
+Renders a suite of PNG charts and an `index.html` for a dataset: label distribution, score distributions, pass/fail, lengths, categories, judge agreement matrix, validation breakdown.
 
-```bash
-# 0) One-time
-flywheel init
-
-# 1) Ingest any dataset (JSONL / JSON / CSV / HF) into the tool's format.
-#    Exact duplicates collapse automatically (deterministic pair IDs).
-flywheel ingest --input my.jsonl --name toy --format jsonl \
-  --map instruction=prompt,output=completion
-
-# 2) Validate: schema, length, dedup, PII, language, profanity.
-#    --write-clean emits a filtered JSONL dropping errors + duplicates.
-flywheel validate --dataset toy --checks schema,length,pii,dedup \
-  --write-clean data/user/toy.clean.jsonl
-
-# 3) LLM-as-judge with pluggable backends + external YAML rubric.
-#    Backends: ollama | openrouter | anthropic.
-flywheel judge --dataset toy --rubric rubrics/default.yaml \
-  --backend ollama --model gemma4:latest --concurrency 2 --tag v1
-
-# 4) Label pairs — bulk expression, auto from judgments, or interactive TUI.
-flywheel label --dataset toy --mode auto-from-judge \
-  --judgments data/judgments/toy.v1.jsonl
-flywheel label --dataset toy --mode bulk \
-  --where "scores['overall'] >= 9" --set-status approved --tag high_quality \
-  --judgments data/judgments/toy.v1.jsonl
-flywheel label --dataset toy --mode interactive --resume
-
-# 5) Inspect + export (with filter expression + train/val split).
-flywheel dataset ls
-flywheel dataset info toy
-flywheel dataset export toy --to data/exports/train.jsonl \
-  --filter "label['status'] == 'approved'" --split train=0.8,val=0.2
-
-# 6) Visualize — render PNG charts + an index.html for the dataset.
-flywheel visualize --dataset toy --output reports/toy
-
-# 7) Run two judges, compare, and calibrate against labels.
-flywheel judge    --dataset toy --backend ollama      --tag ollama
-flywheel judge    --dataset toy --backend openrouter  --tag openrouter
-flywheel compare  --dataset toy --tags ollama,openrouter
-flywheel calibrate --dataset toy --tag ollama         # vs label.status=='approved'
-
-# 8) Reproducible pipeline — one YAML, one command.
-flywheel pipeline run pipeline.yaml
+```
+$ flywheel visualize -d demo
+  categories      reports/demo/categories.png
+  lengths         reports/demo/lengths.png
+  validation      reports/demo/validation.png
+  pass_fail       reports/demo/pass_fail.png
+  scores          reports/demo/scores.png
+  criteria        reports/demo/criteria.png
+  labels          reports/demo/labels.png
+  judge_agreement reports/demo/judge_agreement.png
+  index.html      reports/demo/index.html
 ```
 
-### Judge sharpness
+### dataset ls | info | export
 
-- **Judgment cache.** Every call is keyed on
-  `sha256(pair_id + rubric.name + rubric.version + backend + model)` and
-  written to `data/judgments/.cache/`. Re-running a judge is instant and
-  free. Disable per call with `--no-cache`.
-- **`flywheel compare -d <ds> --tags a,b`.** Computes Cohen's κ on
-  pass/fail, pass-agreement %, and Pearson correlation on overall scores
-  between two judgment runs. Writes `reports/<ds>/compare.json`.
-- **`flywheel calibrate -d <ds> --tag <t>`.** Treats `label.status ==
-  'approved'` as ground truth and reports precision / recall / F1 / accuracy
-  for the judge's `passed` decision. Writes `reports/<ds>/calibrate.<t>.json`.
+```
+$ flywheel dataset ls
+  name   pairs  source  tags
+  demo   8      jsonl   demo1
 
-### Pipeline YAML
+$ flywheel dataset info demo
+  pairs       data/user/demo.jsonl               present
+  meta        data/user/demo.meta.json           present
+  validation  data/validation/demo.report.json   present
+  labels      data/labels/demo.jsonl             present
+  judgments   data/judgments                     5 set(s)
 
-`flywheel pipeline run <config.yaml>` runs steps in order, reusing the
-same CLI logic so behaviour matches manual runs 1:1. Supported step
-names: `ingest | validate | judge | label | export | visualize | compare
-| calibrate`. `judgments: auto` in `label` / `export` resolves to the
-previous `judge` step's tag, so you rarely need to spell paths out.
+$ flywheel dataset export demo \
+    --to data/exports/demo.jsonl \
+    --format jsonl \
+    --judgments data/judgments/demo.judge_a.jsonl \
+    --filter "scores['overall'] >= 7" \
+    --split train=0.8,val=0.2
+Wrote 4 pairs -> data/exports/demo.train.jsonl
+Wrote 2 pairs -> data/exports/demo.val.jsonl
+```
+
+The `--filter` expression uses a safe evaluator - only arithmetic, comparisons, and subscript access into the context dict. Keys: `id, instruction, input, output, category, difficulty, metadata, scores, passed, judge_model, label`. Attribute access (`pair.output`) and function calls are rejected.
+
+### pipeline run
+
+Run ingest -> validate -> judge -> label -> export in a single YAML-described flow:
 
 ```yaml
-dataset: toy
+# pipeline_demo.yaml
+dataset: demo
 steps:
-  - ingest:
-      input: toy.jsonl
-      format: jsonl
-      map: {instruction: prompt, output: completion}
   - validate:
-      checks: [schema, dedup, pii, length]
-      fail_on: never
-      write_clean: true
-  - judge:
-      backend: ollama
-      model: gemma4:latest
-      tag: v1
-      max_pairs: 10
-      concurrency: 2
-  - label:
-      mode: auto-from-judge
-      judgments: auto
+      checks: [schema, length, dedup]
   - export:
-      to: data/exports/toy.jsonl
-      filter: "label['status'] == 'approved'"
-      split: {train: 0.8, val: 0.2}
-  - visualize: {}
+      to: data/user/demo_pipeline.jsonl
+      format: jsonl
 ```
 
-Steps stop on the first non-zero exit by default; pass `--keep-going` to
-continue.
-
-### Visualizations
-
-`flywheel visualize -d <dataset>` reads the dataset's pairs, judgments,
-labels and validation report and renders a chart suite under
-`reports/<dataset>/` (override with `--output`):
-
-| file | chart | what it shows |
-| --- | --- | --- |
-| `categories.png` | horizontal bar | pair counts per `category` |
-| `lengths.png` | side-by-side histograms | char lengths of instruction + output |
-| `validation.png` | horizontal bar | issue counts per validation check |
-| `pass_fail.png` | bar | judge pass vs fail totals |
-| `scores.png` | histogram | overall-score distribution (0-10) |
-| `criteria.png` | bar | mean coherence / accuracy / helpfulness / overall |
-| `labels.png` | bar | label distribution (approved / needs_edit / rejected / skipped), latest-wins per pair |
-| `judge_agreement.png` | 2×2 heatmap | pass/fail agreement between two judgment tags — rendered only when ≥2 `--tag` runs exist for the dataset |
-| `index.html` | gallery | all charts on one page with a summary row |
-
-**Rubrics** are YAML files under `rubrics/` — see `rubrics/default.yaml` and
-`rubrics/factuality.yaml`. `--rubric` is optional; if omitted the tool uses
-`rubrics/default.yaml` when present.
-
-**Judge backends** (`src/synthetic_data_flywheel/judge_backends/`) all
-implement a common async `JudgeBackend` protocol:
-
-| backend | required env | default model |
-| --- | --- | --- |
-| `ollama` | local server on `OLLAMA_BASE_URL` (default `http://localhost:11434`) | `ollama_model` setting |
-| `openrouter` | `OPENROUTER_API_KEY` | `openrouter_model` setting |
-| `anthropic` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
-
-**Bulk-label / export filter expressions** are evaluated in a restricted
-sandbox over `{instruction, output, category, difficulty, metadata, scores,
-passed, judge_model, label}`. Only literals, comparisons, boolean ops and
-subscripts are allowed — attribute access, function calls and dunders are
-rejected.
-
-**Timeouts**: local 7–8B judge models (e.g. Gemma) can take 30–90 s per
-call, so the default `judge_timeout` is 180 s. Bump it via env
-(`JUDGE_TIMEOUT=300`) if you see `ReadTimeout` in the judge summary's
-"Failed (errors)" row.
-
-On-disk layout (added by these commands):
-
 ```
-data/
-  user/        <ds>.jsonl    <ds>.meta.json
-  validation/  <ds>.report.json
-  labels/      <ds>.jsonl                     # append-only, latest-wins
-  judgments/   <ds>.<tag>.jsonl
-rubrics/       default.yaml  factuality.yaml
+$ flywheel pipeline run pipeline_demo.yaml
+[1/2] flywheel validate -d demo --checks schema,length,dedup
+[2/2] flywheel dataset export demo --to data/user/demo_pipeline.jsonl --format jsonl
+   Pipeline: demo
+  1  validate  ok  0
+  2  export    ok  0
 ```
 
-The original `flywheel run | status | report | init` flywheel-loop commands
-are unchanged.
+Steps dispatch through the same Click commands as manual runs - behavior is identical.
 
-### Python API
+### run, status, report
+
+`flywheel run` is the autonomous seeds-to-checkpoint loop. Generation goes through OpenRouter (`OPENROUTER_API_KEY` must be set); the judge stage uses a sync Ollama client (hardcoded in `engine.create_judge`). If Ollama is not running, generation still succeeds and pairs are saved in the checkpoint — they'll just all get `passed=false, reasoning="Judgment failed"`. `status` summarizes checkpoint state; `report` produces an HTML report across cycles.
+
+Real captured run (1 cycle, 2 seeds, `meta-llama/llama-3.2-3b-instruct` as generator; no Ollama running, so judge errors gracefully):
+
+```
+$ export OPENROUTER_API_KEY=sk-or-...
+$ export OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct
+$ flywheel run -s "benefits of green tea,history of python language" --max-cycles 1
+╭───── Configuration ─────╮
+│ Synthetic Data Flywheel │
+│ Seeds: 2                │
+│ Max Cycles: 1           │
+╰─────────────────────────╯
+Starting Flywheel with max_cycles=1
+============================================================
+Starting Cycle 1
+============================================================
+Using 2 seeds
+Generating synthetic data...
+Generated 2 pairs
+Judging quality...
+Passed: 0, Failed: 2            # Ollama not running → judge fallback
+Cycle 1 complete. Pass rate: 0.00%
+Flywheel complete. Ran 1 cycles.
+       Flywheel Summary
+┏━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Metric             ┃ Value ┃
+┡━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ Total Cycles       │ 1     │
+│ Total Passed Pairs │ 0     │
+│ Avg Pass Rate      │ 0.00% │
+└────────────────────┴───────┘
+```
+
+The OpenRouter-generated pair is saved verbatim inside `data/checkpoints/checkpoint_001.json`, e.g.:
+
+```json
+{
+  "instruction": "benefits of green tea",
+  "output": "Here is an example of an instruction-following training data in JSON format:\n\n{\n  \"instruction\": \"What are some of the benefits of drinking green tea?\",\n  \"output\": \"Green tea has numerous benefits, including: - High antioxidant content - Anti-inflammatory properties - May help with weight loss ...\",\n  \"category\": \"instruction\"\n}",
+  "source_seed": "benefits of green tea"
+}
+```
+
+If you have Ollama running locally you get non-zero pass rates end-to-end. If you don't, run the pipeline in two steps (`flywheel run` to generate, then `flywheel judge --backend openrouter` on the exported pairs) to get OpenRouter-judged quality scores without Ollama.
+
+```
+$ flywheel status
+$ flywheel report
+Report generated: reports/flywheel_report_20260423_171226.html
+```
+
+---
+
+## Python API
+
+Everything the CLI does is available as a library.
+
+```python
+from synthetic_data_flywheel import (
+    SyntheticPair, JudgmentResult, QualityScores, CycleState, FlywheelConfig,
+)
+from synthetic_data_flywheel.ingest import load_dataset_jsonl, DatasetIngestor
+from synthetic_data_flywheel.validator import Validator
+from synthetic_data_flywheel.rubrics import default_rubric, load_rubric, render_prompt
+from synthetic_data_flywheel.judge import AsyncQualityJudge
+from synthetic_data_flywheel.judge_backends import get_backend
+from synthetic_data_flywheel.judge_cache import JudgmentCache
+from synthetic_data_flywheel.labeler import LabelStore, auto_from_judge, bulk_apply, SafeEval
+from synthetic_data_flywheel.stats import cohens_kappa, pearson, prf
+from synthetic_data_flywheel.evaluator import create_evaluator
+from synthetic_data_flywheel.dataset_manager import create_dataset_manager
+from synthetic_data_flywheel.engine import create_engine
+from synthetic_data_flywheel.viz import load_inputs, render_all
+```
+
+Minimal end-to-end call:
 
 ```python
 import asyncio
-from synthetic_data_flywheel import create_engine
+from pathlib import Path
+from synthetic_data_flywheel.ingest import load_dataset_jsonl
+from synthetic_data_flywheel.rubrics import default_rubric
+from synthetic_data_flywheel.judge import AsyncQualityJudge
+from synthetic_data_flywheel.judge_backends import get_backend
+from synthetic_data_flywheel.judge_cache import JudgmentCache
 
-# Create engine with seeds
-engine = create_engine(
-    seeds=["Explain Python", "What is AI?"],
-    max_cycles=3,
+pairs = load_dataset_jsonl("data/user/demo.jsonl")
+backend = get_backend("ollama", model="gemma4:latest")
+judge = AsyncQualityJudge(
+    backend=backend,
+    rubric=default_rubric(),
+    cache=JudgmentCache(root=Path(".cache/judge")),
+    backend_name="ollama",
 )
-
-# Run the flywheel
-asyncio.run(engine.run_full_loop())
-
-# Get summary
-summary = engine.get_summary()
-print(f"Generated {summary['total_passed_pairs']} pairs")
+judgments = asyncio.run(judge.judge_batch(pairs, concurrency=2))
+print(sum(j.passed for j in judgments), "/", len(judgments), "passed")
 ```
 
-### A2A Agent (Multi-Agent Orchestration)
+Statistics you can call directly:
 
-Start the A2A agent server:
+```python
+>>> cohens_kappa([True, False, True, False], [True, True, True, False])
+0.5
+>>> pearson([1,2,3,4], [1,3,2,5])
+0.8315...
+>>> prf([True,True,False,False], [True,False,True,False])
+{'precision': 0.5, 'recall': 0.5, 'f1': 0.5, 'accuracy': 0.5, 'tp': 1, 'fp': 1, 'tn': 1, 'fn': 1}
+```
 
-```bash
+---
+
+## A2A agent
+
+`synthetic_data_flywheel.a2a_agent` exposes a FastAPI application implementing the A2A protocol surface (`/a2a/capabilities`, `/a2a/tasks/send`, `/a2a/tasks/get`, `/a2a/tasks/cancel`). This lets the flywheel be orchestrated as a node in a multi-agent ML pipeline.
+
+Run the server:
+
+```
 python -m synthetic_data_flywheel.a2a_agent
+# or: uvicorn synthetic_data_flywheel.a2a_agent:app --host 0.0.0.0 --port 8080
 ```
 
-Or use the FastAPI app directly:
+Example request:
 
 ```python
-from synthetic_data_flywheel.a2a_agent import create_a2a_app
-import uvicorn
+from fastapi.testclient import TestClient
+from synthetic_data_flywheel.a2a_agent import app
 
-app = create_a2a_app()
-uvicorn.run(app, host="0.0.0.0", port=8000)
+client = TestClient(app)
+print(client.get("/a2a/capabilities").json())
+# {'agent_name': 'synthetic_data_flywheel', 'version': '0.1.0',
+#  'capabilities': [{'name': 'generate_synthetic_data', ...},
+#                   {'name': 'get_status', ...},
+#                   {'name': 'generate_report', ...}]}
+
+r = client.post("/a2a/tasks/send", json={
+    "capability": "get_status",
+    "inputs": [],
+    "parameters": {},
+})
+print(r.json())
+# {'task_id': '...', 'status': {'state': 'completed'},
+#  'result': {'type': 'status_result',
+#             'content': {'checkpoints_found': 1, 'checkpoint_dir': 'data/checkpoints'}}, ...}
 ```
 
-#### A2A Protocol Endpoints
+---
 
-- `GET /a2a/capabilities` - Get agent capabilities
-- `POST /a2a/tasks/send` - Send a task to the agent
-- `POST /a2a/tasks/get` - Get task status and result
-- `POST /a2a/tasks/cancel` - Cancel a running task
-
-## 🧪 Testing
-
-Run the test suite:
-
-```bash
-pytest tests/ -v
-```
-
-Run with coverage:
-
-```bash
-pytest tests/ --cov=synthetic_data_flywheel --cov-report=html
-```
-
-## 📁 Project Structure
+## Architecture
 
 ```
-synthetic-data-flywheel/
-├── src/synthetic_data_flywheel/
-│   ├── __init__.py          # Package exports
-│   ├── config.py            # Configuration management
-│   ├── models.py            # Pydantic data models
-│   ├── generator.py         # OpenRouter client
-│   ├── judge.py             # Ollama client
-│   ├── dataset_manager.py   # HuggingFace datasets
-│   ├── trainer.py           # Unsloth notebook generation
-│   ├── evaluator.py         # Metrics computation
-│   ├── engine.py            # Main flywheel loop
-│   ├── cli.py               # Command-line interface
-│   ├── a2a_agent.py         # A2A protocol server
-│   └── report_generator.py  # HTML report generation
-├── tests/                   # Unit tests
-├── data/                    # Data directory
-├── docs/                    # Documentation
-├── notebooks/               # Jupyter notebooks
-├── reports/                 # Generated reports
-├── templates/               # Jinja2 templates
-├── pyproject.toml          # Project configuration
-├── .env.example            # Environment template
-└── README.md               # This file
+                        seeds / existing dataset
+                                  |
+                                  v
+                 +----------------+-----------------+
+                 |                                  |
+                 v                                  v
+          generator (OpenRouter)            ingest (jsonl/csv/hf)
+                 |                                  |
+                 +---------------+------------------+
+                                 v
+                           SyntheticPair[]
+                                 |
+                                 v
+                     validator  (schema/dedup/pii/...)
+                                 |
+                                 v
+                 judge (Ollama | OpenRouter | Anthropic)
+                           + JudgmentCache
+                                 |
+                                 v
+                       JudgmentResult[]  -----> compare / calibrate
+                                 |
+                                 v
+                     labeler (interactive / bulk / auto)
+                                 |
+                                 v
+                        LabelStore (JSONL)
+                                 |
+                                 v
+                     export + split (train/val/test)
+                                 |
+                                 v
+                   trainer notebook (Unsloth, Colab GPU)
+                                 |
+                                 v
+                         evaluator -> failure seeds
+                                 |
+                                 +--> fed back into next cycle
+
+              -------  viz / report -> PNGs + HTML  -------
+              -------  A2A agent    -> FastAPI    --------
 ```
 
-## ⚙️ Configuration
+Module map (`src/synthetic_data_flywheel/`):
 
-All configuration is managed through environment variables or `.env` file:
+- `models.py` - Pydantic types: `SyntheticPair`, `JudgmentResult`, `QualityScores`, `CycleState`, `FlywheelConfig`, `Label`, `ValidationReport`, `DatasetMeta`.
+- `config.py` - `Settings` via pydantic-settings; reads `.env`.
+- `ingest.py` - `DatasetIngestor`, `load_dataset_jsonl`, `normalize_row`. Supports jsonl, json, csv, and `hf://<repo-id>`.
+- `validator.py` - `Validator` plus `check_schema/length/dedup/pii/lang/profanity`.
+- `rubrics.py` - `Rubric`, `Criterion`, `load_rubric`, `render_prompt`, `default_rubric`.
+- `judge.py` - `AsyncQualityJudge` (used by CLI) + legacy sync `QualityJudge` / `OllamaClient`.
+- `judge_backends/` - `ollama.py`, `openrouter.py`, `anthropic.py`, plus `registry.get_backend(name)`.
+- `judge_cache.py` - `JudgmentCache` (file-backed, sharded by pair id).
+- `labeler.py` - `SafeEval`, `LabelStore`, `bulk_apply`, `auto_from_judge`, `interactive_loop`.
+- `stats.py` - `cohens_kappa`, `pearson`, `prf`.
+- `evaluator.py` - `Evaluator.evaluate_judgments`.
+- `generator.py` - `OpenRouterClient` with prompt templates (`QA`, `INSTRUCTION`, `REASONING`, `CREATIVE`).
+- `engine.py` - `FlywheelEngine` (cycle loop, checkpointing, failure-seed feedback).
+- `trainer.py` - `Trainer.prepare_training_artifacts` (writes a Colab-ready Unsloth notebook).
+- `dataset_manager.py` - `DatasetManager` (local save + HF push when a token is set).
+- `report_generator.py` - HTML report across cycles.
+- `viz.py` - Matplotlib charts for a single dataset.
+- `pipeline.py` - Declarative YAML pipeline runner (dispatches through the same CLI).
+- `a2a_agent.py` - FastAPI A2A server.
+- `cli.py` - Click entry points.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENROUTER_API_KEY` | OpenRouter API key | Required |
-| `OPENROUTER_MODEL` | Model for generation | `qwen/qwen3-8b` |
-| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
-| `OLLAMA_MODEL` | Model for judging | `gemma4` |
-| `QUALITY_MIN_SCORE` | Minimum quality threshold | `7.0` |
-| `MAX_CYCLES` | Maximum flywheel cycles | `5` |
-| `HF_TOKEN` | HuggingFace token | Optional |
+---
 
-## 🔧 Advanced Usage
+## How it works
 
-### Custom Prompt Templates
+A single dataset moves through a series of additive stages, each producing artifacts keyed by the dataset name:
 
-```python
-from synthetic_data_flywheel.generator import PromptTemplate
+| Stage      | Reads                              | Writes                                   |
+| ---------- | ---------------------------------- | ---------------------------------------- |
+| ingest     | raw file / HF repo                 | `data/user/<name>.jsonl`, `.meta.json`   |
+| validate   | pairs                              | `data/validation/<name>.report.json`     |
+| judge      | pairs + rubric                     | `data/judgments/<name>.<tag>.jsonl`      |
+| label      | pairs + optional judgments         | `data/labels/<name>.jsonl`               |
+| compare    | 2+ judgment tags                   | `reports/<name>/compare.json`            |
+| calibrate  | judgments + labels                 | `reports/<name>/calibrate.<tag>.json`    |
+| visualize  | all of the above                   | `reports/<name>/*.png` + `index.html`    |
+| export     | pairs + optional judgments/labels  | arbitrary path(s), split by ratio        |
 
-# Use built-in templates
-template = PromptTemplate.get("REASONING")
+Each stage is idempotent and re-runnable. The judge cache makes repeated judge passes free. The label store is append-only so labeling sessions can be interrupted and resumed.
 
-# Or create custom
-custom_template = """Based on: {seed}
+The autonomous loop (`flywheel run`) repeats:
 
-Generate a step-by-step reasoning problem with solution."""
+1. Generate candidate pairs from seeds via OpenRouter.
+2. Judge them via Ollama.
+3. Filter to the passing set.
+4. Save a training artifact + a Colab-ready Unsloth notebook.
+5. Extract the failure instructions and feed them as additional seeds for cycle N+1.
+6. Checkpoint to `data/checkpoints/checkpoint_NNN.json`.
+
+The cycle stops when pass rate drops below `min_pass_rate` (default 0.5) or `max_cycles` is reached.
+
+---
+
+## Configuration
+
+All settings can be set via env vars or `.env` (see `.env.example`). The most common:
+
+```
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_MODEL=qwen/qwen3-8b:free
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gemma4:latest
+DEFAULT_JUDGE_BACKEND=ollama        # ollama | openrouter | anthropic
+JUDGE_CONCURRENCY=4
+JUDGE_TIMEOUT=600                    # seconds; bump for cold 8B+ local models
+QUALITY_MIN_SCORE=7.0
+MAX_CYCLES=10
+PII_POLICY=warn                      # strict | warn | off
+A2A_HOST=0.0.0.0
+A2A_PORT=8080
 ```
 
-### Custom Quality Rubric
+---
 
-```python
-from synthetic_data_flywheel.judge import QualityJudge
+## Tests
 
-judge = QualityJudge()
-# Modify QUALITY_RUBRIC_TEMPLATE in judge.py for custom criteria
+```
+pytest
 ```
 
-### Dataset Versioning
+100 tests cover models, rubrics, validator, labeler, judge, judge backends, judge cache, ingest, viz, CLI, pipeline, dataset_manager, sharpness, and a full integration cycle.
 
-```python
-from synthetic_data_flywheel.dataset_manager import create_dataset_manager
+---
 
-dm = create_dataset_manager()
+## Limitations / what is gated behind external resources
 
-# Save to HuggingFace Hub
-dm.save_to_huggingface(pairs, repo_id="username/dataset-name")
+- Fine-tuning (the "trainer" step) requires Unsloth + a GPU. `Trainer.prepare_training_artifacts` writes a Colab-ready notebook under `notebooks/training_cycle_NNN.ipynb`; you open it in Colab on a free T4, run all cells, and download the LoRA adapter. Running locally on CPU is not supported by Unsloth.
+- `flywheel run` (the autonomous generation loop) requires `OPENROUTER_API_KEY` because generation goes through OpenRouter. The in-loop judge, however, is hardcoded to Ollama (`engine.create_judge` constructs a sync `QualityJudge` over `OllamaClient`) — if Ollama isn't available, generation still works and pairs are persisted, but every judgment falls back to `passed=false`. The standalone `flywheel judge --backend openrouter/anthropic` works fully without Ollama. Everything downstream - validate, label, compare, calibrate, visualize, export, pipeline, A2A - runs purely on local resources or on tiny CPU-only compute.
+- Large local judges are slow to cold-start. Gemma 4 (9 GB) takes about 130 seconds the first time it is loaded into VRAM/RAM. The default `JUDGE_TIMEOUT` is 600s to cover this; bump further if your hardware is slower.
+- Ingest from HuggingFace (`hf://<repo-id>`) requires the `datasets` package (already a dep) plus `HUGGINGFACE_TOKEN` for gated datasets.
+- Anthropic judge backend requires `ANTHROPIC_API_KEY`.
 
-# Load from HuggingFace Hub
-pairs = dm.load_from_huggingface("username/dataset-name")
-```
+---
 
-## 📊 Metrics
+## License
 
-The flywheel tracks:
-
-- **Pass Rate**: Percentage of pairs passing quality judgment
-- **Quality Scores**: Coherence, accuracy, helpfulness (0-10)
-- **Cycle Duration**: Time per flywheel cycle
-- **Total Generated**: Cumulative synthetic pairs
-
-View metrics in generated HTML reports or via `flywheel status`.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing`)
-5. Open a Pull Request
-
-## 📄 License
-
-MIT License - see LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- [OpenRouter](https://openrouter.ai/) for LLM API access
-- [Ollama](https://ollama.ai/) for local LLM inference
-- [Unsloth](https://github.com/unslothai/unsloth) for efficient fine-tuning
-- [HuggingFace](https://huggingface.co/) for dataset hosting
+MIT. See `LICENSE`.

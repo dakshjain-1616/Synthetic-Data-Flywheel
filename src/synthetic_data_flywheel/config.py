@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # Judge settings
     judge_max_tokens: int = 1024
     judge_temperature: float = 0.3
-    judge_timeout: int = 180
+    judge_timeout: int = 600
     
     # A2A settings
     a2a_host: str = "0.0.0.0"
