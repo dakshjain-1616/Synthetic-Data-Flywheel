@@ -1,0 +1,26 @@
+name: factuality
+version: 1
+description: Prioritizes correctness/accuracy over style.
+criteria:
+  - {id: coherence, scale: [0, 10]}
+  - {id: accuracy, scale: [0, 10]}
+  - {id: helpfulness, scale: [0, 10]}
+pass_condition: "accuracy >= 8 and overall >= 7"
+temperature_override: 0.2
+prompt_template: |
+  You are a fact-checking judge. Evaluate whether the RESPONSE is factually
+  correct and directly addresses the INSTRUCTION. Penalize hallucinations
+  harshly; reward citations of verifiable facts.
+
+  INSTRUCTION:
+  {{ pair.instruction }}
+
+  RESPONSE:
+  {{ pair.output[:2000] }}
+
+  Return JSON only:
+  {"coherence": X, "accuracy": X, "helpfulness": X, "overall": X,
+   "passed": true, "reasoning": "brief — cite any factual errors"}
+output_schema:
+  type: object
+  required: [coherence, accuracy, helpfulness, overall]

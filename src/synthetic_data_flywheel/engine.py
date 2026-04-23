@@ -4,21 +4,15 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID
-
-import structlog
+from typing import Any, Dict, List, Optional
 
 from synthetic_data_flywheel.config import get_settings
-from synthetic_data_flywheel.dataset_manager import DatasetManager
-from synthetic_data_flywheel.evaluator import Evaluator
-from synthetic_data_flywheel.generator import OpenRouterClient, PromptTemplate
-from synthetic_data_flywheel.judge import OllamaClient, QualityJudge
+from synthetic_data_flywheel.dataset_manager import create_dataset_manager
+from synthetic_data_flywheel.evaluator import create_evaluator
+from synthetic_data_flywheel.generator import create_generator
+from synthetic_data_flywheel.judge import create_judge
 from synthetic_data_flywheel.models import CycleState, JudgmentResult, SyntheticPair
-from synthetic_data_flywheel.report_generator import ReportGenerator
-from synthetic_data_flywheel.trainer import Trainer
-
-logger = structlog.get_logger()
+from synthetic_data_flywheel.trainer import create_trainer
 
 
 class FlywheelEngine:
@@ -26,378 +20,229 @@ class FlywheelEngine:
     
     def __init__(
         self,
-        generator: Optional[OpenRouterClient] = None,
-        judge: Optional[QualityJudge] = None,
-        dataset_manager: Optional[DatasetManager] = None,
-        trainer: Optional[Trainer] = None,
-        evaluator: Optional[Evaluator] = None,
-        report_generator: Optional[ReportGenerator] = None,
+        seeds: List[str],
         checkpoint_dir: Optional[str] = None,
+        max_cycles: Optional[int] = None,
     ):
-        """Initialize flywheel engine.
-        
-        Args:
-            generator: OpenRouter client for generation
-            judge: Quality judge for filtering
-            dataset_manager: Dataset manager
-            trainer: Training notebook generator
-            evaluator: Evaluation metrics
-            report_generator: Report generator
-            checkpoint_dir: Directory for checkpoints
-        """
+        """Initialize the flywheel engine."""
         settings = get_settings()
         
-        self.generator = generator or OpenRouterClient()
-        self.judge = judge or QualityJudge()
-        self.dataset_manager = dataset_manager or DatasetManager()
-        self.trainer = trainer or Trainer()
-        self.evaluator = evaluator or Evaluator()
-        self.report_generator = report_generator or ReportGenerator()
-        
+        self.seeds = seeds
+        self.max_cycles = max_cycles or settings.max_cycles
         self.checkpoint_dir = Path(checkpoint_dir or settings.checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize components
+        self.generator = create_generator()
+        self.judge = create_judge()
+        self.dataset_manager = create_dataset_manager()
+        self.trainer = create_trainer()
+        self.evaluator = create_evaluator()
+        
+        # State tracking
+        self.current_cycle = 0
         self.cycles: List[CycleState] = []
-        self.current_cycle: int = 0
-        
-        logger.info(
-            "flywheel_engine_initialized",
-            checkpoint_dir=str(self.checkpoint_dir),
-        )
+        self.all_passed_pairs: List[SyntheticPair] = []
     
-    async def run_cycle(
-        self,
-        seeds: List[str],
-        cycle_id: Optional[int] = None,
-        template_type: str = PromptTemplate.INSTRUCTION,
-        max_concurrent: int = 5,
-    ) -> CycleState:
-        """Run a single flywheel cycle.
+    async def run_cycle(self, cycle_id: int) -> CycleState:
+        """Run a single flywheel cycle."""
+        print(f"\n{'='*60}")
+        print(f"Starting Cycle {cycle_id}")
+        print(f"{'='*60}")
         
-        Args:
-            seeds: Seed prompts for generation
-            cycle_id: Optional cycle ID
-            template_type: Prompt template type
-            max_concurrent: Max concurrent generations
-            
-        Returns:
-            Cycle state with results
-        """
-        cycle_id = cycle_id or self.current_cycle + 1
-        self.current_cycle = cycle_id
+        cycle_start = datetime.utcnow()
         
-        start_time = datetime.now()
-        logger.info("cycle_started", cycle_id=cycle_id, seeds=len(seeds))
+        # Get seeds for this cycle
+        cycle_seeds = self._get_seeds_for_cycle(cycle_id)
+        print(f"Using {len(cycle_seeds)} seeds")
         
-        # Step 1: Generate synthetic data
-        logger.info("generating_synthetic_data", cycle_id=cycle_id)
+        # Generate synthetic pairs
+        print("Generating synthetic data...")
         generated_pairs = await self.generator.generate_batch(
-            seeds=seeds,
-            template_type=template_type,
-            cycle_id=cycle_id,
-            max_concurrent=max_concurrent,
+            seeds=cycle_seeds,
+            template_type="INSTRUCTION",
         )
+        print(f"Generated {len(generated_pairs)} pairs")
         
-        logger.info(
-            "generation_complete",
-            cycle_id=cycle_id,
-            generated=len(generated_pairs),
-        )
-        
-        # Step 2: Judge quality
-        logger.info("judging_quality", cycle_id=cycle_id)
+        # Judge quality
+        print("Judging quality...")
         judgments = self.judge.judge_batch(generated_pairs)
+        passed_pairs, failed_pairs = self.judge.filter_pairs(generated_pairs, judgments)
+        print(f"Passed: {len(passed_pairs)}, Failed: {len(failed_pairs)}")
         
-        passed_count = sum(1 for j in judgments if j.passed)
-        logger.info(
-            "judgment_complete",
-            cycle_id=cycle_id,
-            total=len(judgments),
-            passed=passed_count,
-            failed=len(judgments) - passed_count,
-        )
+        # Evaluate
+        eval_metrics = self.evaluator.evaluate_judgments(judgments)
         
-        # Step 3: Filter pairs
-        passed_pairs, passed_judgments = self.judge.filter_pairs(
-            generated_pairs,
-            judgments,
-        )
-        
-        # Step 4: Evaluate
-        eval_metrics = self.evaluator.evaluate_dataset(passed_pairs, passed_judgments)
-        
-        # Step 5: Save dataset
+        # Save dataset
         dataset_path = self.dataset_manager.save_local(
             passed_pairs,
             filename=f"cycle_{cycle_id:03d}_passed.json",
         )
         
-        # Step 6: Generate training artifacts
+        # Generate training notebook
         artifacts = self.trainer.prepare_training_artifacts(
             passed_pairs,
             cycle_id,
             self.dataset_manager,
         )
         
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
+        cycle_end = datetime.utcnow()
         
         # Create cycle state
         cycle_state = CycleState(
             cycle_id=cycle_id,
             status="completed",
-            seeds=seeds,
-            generated_pairs=generated_pairs,
-            judgments=judgments,
-            passed_pairs=passed_pairs,
-            passed_judgments=passed_judgments,
+            seeds=cycle_seeds,
+            generated_pairs=[p.to_dict() for p in generated_pairs],
+            judgments=[j.to_dict() for j in judgments],
+            passed_pairs=[p.to_dict() for p in passed_pairs],
+            passed_judgments=[j.to_dict() for j in judgments if j.passed],
             eval_metrics=eval_metrics,
             dataset_path=str(dataset_path),
             artifacts={k: str(v) for k, v in artifacts.items()},
-            start_time=start_time,
-            end_time=end_time,
-            duration_seconds=duration,
+            timing={
+                "started_at": cycle_start.isoformat(),
+                "completed_at": cycle_end.isoformat(),
+                "duration_seconds": (cycle_end - cycle_start).total_seconds(),
+            },
         )
         
+        # Update state
         self.cycles.append(cycle_state)
+        self.all_passed_pairs.extend(passed_pairs)
         
         # Save checkpoint
-        self._save_checkpoint(cycle_state)
+        self._save_checkpoint()
         
-        logger.info(
-            "cycle_complete",
-            cycle_id=cycle_id,
-            duration=duration,
-            passed=len(passed_pairs),
-            pass_rate=cycle_state.pass_rate,
-        )
+        print(f"Cycle {cycle_id} complete. Pass rate: {cycle_state.pass_rate:.2%}")
         
         return cycle_state
     
-    def _extract_failure_seeds(
-        self,
-        cycle_state: CycleState,
-    ) -> List[str]:
-        """Extract seeds from failed pairs for next cycle.
+    async def run_full_loop(self) -> List[CycleState]:
+        """Run the full flywheel loop."""
+        print(f"Starting Flywheel with max_cycles={self.max_cycles}")
         
-        Args:
-            cycle_state: Completed cycle state
+        for cycle_id in range(1, self.max_cycles + 1):
+            self.current_cycle = cycle_id
             
-        Returns:
-            List of failure seeds
-        """
-        failure_seeds = []
-        
-        # Map judgments to pairs
-        judgment_map = {j.pair_id: j for j in cycle_state.judgments}
-        
-        for pair in cycle_state.generated_pairs:
-            judgment = judgment_map.get(pair.id)
-            if judgment and not judgment.passed:
-                # Use the original instruction as seed for retry
-                failure_seeds.append(pair.instruction)
-        
-        logger.info(
-            "failure_seeds_extracted",
-            cycle_id=cycle_state.cycle_id,
-            failures=len(failure_seeds),
-        )
-        
-        return failure_seeds
-    
-    def _feedback_loop(
-        self,
-        cycle_state: CycleState,
-        new_seeds: Optional[List[str]] = None,
-    ) -> List[str]:
-        """Prepare seeds for next cycle.
-        
-        Args:
-            cycle_state: Current cycle state
-            new_seeds: Optional new seeds to add
-            
-        Returns:
-            Seeds for next cycle
-        """
-        # Get failure seeds
-        failure_seeds = self._extract_failure_seeds(cycle_state)
-        
-        # Combine with new seeds
-        next_seeds = failure_seeds.copy()
-        if new_seeds:
-            next_seeds.extend(new_seeds)
-        
-        # Deduplicate
-        seen = set()
-        unique_seeds = []
-        for seed in next_seeds:
-            if seed not in seen:
-                seen.add(seed)
-                unique_seeds.append(seed)
-        
-        logger.info(
-            "feedback_loop_complete",
-            cycle_id=cycle_state.cycle_id,
-            next_cycle=cycle_state.cycle_id + 1,
-            seeds_for_next=len(unique_seeds),
-        )
-        
-        return unique_seeds
-    
-    async def run_full_loop(
-        self,
-        initial_seeds: List[str],
-        max_cycles: Optional[int] = None,
-        min_pass_rate: float = 0.5,
-        template_type: str = PromptTemplate.INSTRUCTION,
-    ) -> List[CycleState]:
-        """Run full flywheel loop with feedback.
-        
-        Args:
-            initial_seeds: Starting seeds
-            max_cycles: Maximum cycles to run
-            min_pass_rate: Minimum pass rate to continue
-            template_type: Prompt template type
-            
-        Returns:
-            List of cycle states
-        """
-        settings = get_settings()
-        max_cycles = max_cycles or settings.max_cycles
-        
-        seeds = initial_seeds.copy()
-        
-        for cycle_num in range(1, max_cycles + 1):
-            if not seeds:
-                logger.info("no_more_seeds", cycle=cycle_num)
+            try:
+                cycle_state = await self.run_cycle(cycle_id)
+                
+                # Check if we should continue
+                if cycle_state.pass_rate < 0.1:
+                    print(f"Low pass rate ({cycle_state.pass_rate:.2%}), stopping")
+                    break
+                
+            except Exception as e:
+                print(f"Error in cycle {cycle_id}: {e}")
                 break
-            
-            # Run cycle
-            cycle_state = await self.run_cycle(
-                seeds=seeds,
-                cycle_id=cycle_num,
-                template_type=template_type,
-            )
-            
-            # Check if we should continue
-            if cycle_state.pass_rate < min_pass_rate:
-                logger.warning(
-                    "pass_rate_below_threshold",
-                    cycle=cycle_num,
-                    pass_rate=cycle_state.pass_rate,
-                    threshold=min_pass_rate,
-                )
-            
-            # Prepare seeds for next cycle
-            seeds = self._feedback_loop(cycle_state)
         
-        # Generate final report
-        if self.cycles:
-            report_path = self.report_generator.generate_flywheel_report(self.cycles)
-            logger.info("final_report_generated", path=str(report_path))
-        
+        print(f"\nFlywheel complete. Ran {len(self.cycles)} cycles.")
         return self.cycles
     
-    def _save_checkpoint(self, cycle_state: CycleState) -> Path:
-        """Save cycle checkpoint.
+    def _get_seeds_for_cycle(self, cycle_id: int) -> List[str]:
+        """Get seeds for a cycle, including failure seeds from previous cycles."""
+        if cycle_id == 1:
+            return self.seeds
         
-        Args:
-            cycle_state: Cycle state to save
-            
-        Returns:
-            Path to checkpoint file
-        """
-        checkpoint_path = self.checkpoint_dir / f"cycle_{cycle_state.cycle_id:03d}.json"
+        # Add failure seeds from previous cycle
+        failure_seeds = self._extract_failure_seeds(cycle_id - 1)
+        return self.seeds + failure_seeds
+    
+    def _extract_failure_seeds(self, cycle_id: int) -> List[str]:
+        """Extract failure cases from a cycle to use as seeds."""
+        cycle = next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if not cycle:
+            return []
+
+        # Get failed judgments
+        failed_judgments = [
+            j for j in cycle.judgments
+            if not j.passed
+        ]
+
+        # Extract seeds from failed pairs
+        failure_seeds = []
+        for judgment in failed_judgments:
+            pair_id = str(judgment.pair_id)
+            # Find the corresponding pair
+            for pair in cycle.generated_pairs:
+                if str(pair.id) == pair_id:
+                    # Use instruction as seed
+                    seed = pair.instruction
+                    if seed:
+                        failure_seeds.append(seed)
+                    break
+        
+        # Limit to top failures
+        return failure_seeds[:10]
+    
+    def _save_checkpoint(self) -> Path:
+        """Save current state to checkpoint file."""
+        checkpoint_path = self.checkpoint_dir / f"checkpoint_{self.current_cycle:03d}.json"
+        
+        state = {
+            "current_cycle": self.current_cycle,
+            "cycles": [c.to_dict() for c in self.cycles],
+            "all_passed_pairs_count": len(self.all_passed_pairs),
+        }
         
         with open(checkpoint_path, "w") as f:
-            json.dump(cycle_state.to_dict(), f, indent=2, default=str)
-        
-        logger.info("checkpoint_saved", path=str(checkpoint_path))
+            json.dump(state, f, indent=2)
         
         return checkpoint_path
     
-    def load_checkpoint(self, cycle_id: int) -> Optional[CycleState]:
-        """Load cycle checkpoint.
+    def load_checkpoint(self, checkpoint_path: Optional[str] = None) -> bool:
+        """Load state from checkpoint file."""
+        if checkpoint_path:
+            path = Path(checkpoint_path)
+        else:
+            # Find latest checkpoint
+            checkpoints = sorted(self.checkpoint_dir.glob("checkpoint_*.json"))
+            if not checkpoints:
+                return False
+            path = checkpoints[-1]
         
-        Args:
-            cycle_id: Cycle ID to load
-            
-        Returns:
-            Cycle state or None if not found
-        """
-        checkpoint_path = self.checkpoint_dir / f"cycle_{cycle_id:03d}.json"
+        if not path.exists():
+            return False
         
-        if not checkpoint_path.exists():
-            logger.warning("checkpoint_not_found", path=str(checkpoint_path))
-            return None
+        with open(path, "r") as f:
+            state = json.load(f)
         
-        with open(checkpoint_path, "r") as f:
-            data = json.load(f)
+        self.current_cycle = state.get("current_cycle", 0)
+        self.cycles = [
+            CycleState.from_dict(c) for c in state.get("cycles", [])
+        ]
         
-        cycle_state = CycleState.from_dict(data)
-        
-        logger.info("checkpoint_loaded", cycle_id=cycle_id)
-        
-        return cycle_state
-    
-    def list_checkpoints(self) -> List[int]:
-        """List available checkpoint cycle IDs.
-        
-        Returns:
-            List of cycle IDs
-        """
-        checkpoints = []
-        
-        for file in self.checkpoint_dir.glob("cycle_*.json"):
-            try:
-                cycle_id = int(file.stem.split("_")[1])
-                checkpoints.append(cycle_id)
-            except (IndexError, ValueError):
-                continue
-        
-        return sorted(checkpoints)
+        print(f"Loaded checkpoint from cycle {self.current_cycle}")
+        return True
     
     def get_summary(self) -> Dict[str, Any]:
-        """Get summary of all cycles.
-        
-        Returns:
-            Summary statistics
-        """
-        if not self.cycles:
-            return {"cycles": 0}
-        
-        total_generated = sum(len(c.generated_pairs) for c in self.cycles)
-        total_passed = sum(len(c.passed_pairs) for c in self.cycles)
-        
+        """Get summary of all cycles."""
         return {
-            "cycles": len(self.cycles),
-            "total_generated": total_generated,
-            "total_passed": total_passed,
-            "overall_pass_rate": total_passed / total_generated if total_generated else 0,
-            "avg_quality_per_cycle": [
-                {"cycle": c.cycle_id, "avg_quality": c.avg_quality_score}
+            "total_cycles": len(self.cycles),
+            "total_passed_pairs": len(self.all_passed_pairs),
+            "avg_pass_rate": sum(c.pass_rate for c in self.cycles) / len(self.cycles) if self.cycles else 0,
+            "cycles": [
+                {
+                    "cycle_id": c.cycle_id,
+                    "pass_rate": c.pass_rate,
+                    "avg_quality": c.avg_quality_score,
+                    "duration": c.timing.get("duration_seconds", 0),
+                }
                 for c in self.cycles
             ],
         }
 
 
 def create_engine(
-    generator: Optional[OpenRouterClient] = None,
-    judge: Optional[QualityJudge] = None,
-    **kwargs,
+    seeds: List[str],
+    checkpoint_dir: Optional[str] = None,
+    max_cycles: Optional[int] = None,
 ) -> FlywheelEngine:
-    """Factory function to create flywheel engine.
-    
-    Args:
-        generator: Generator client
-        judge: Quality judge
-        **kwargs: Additional kwargs for engine
-        
-    Returns:
-        Configured FlywheelEngine
-    """
+    """Factory function to create a flywheel engine."""
     return FlywheelEngine(
-        generator=generator,
-        judge=judge,
-        **kwargs
+        seeds=seeds,
+        checkpoint_dir=checkpoint_dir,
+        max_cycles=max_cycles,
     )

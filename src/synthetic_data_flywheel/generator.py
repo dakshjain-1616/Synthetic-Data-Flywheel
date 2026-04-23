@@ -18,7 +18,7 @@ QA_GENERATION_TEMPLATE = """Generate a question-answer pair based on this topic:
 
 Respond in JSON format:
 {{
-    "instruction": "The question",
+    "instruction": "The question to ask",
     "output": "The detailed answer",
     "category": "qa"
 }}"""
@@ -192,10 +192,10 @@ class OpenRouterClient:
         # Parse JSON response
         try:
             json_str = response_text
-            if "```json" in response_text:
-                json_str = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                json_str = response_text.split("```")[1].split("```")[0]
+            if "\`\`\`json" in response_text:
+                json_str = response_text.split("\`\`\`json")[1].split("\`\`\`")[0]
+            elif "\`\`\`" in response_text:
+                json_str = response_text.split("\`\`\`")[1].split("\`\`\`")[0]
             
             data = json.loads(json_str.strip())
             

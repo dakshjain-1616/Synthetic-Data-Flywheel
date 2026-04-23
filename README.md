@@ -1,50 +1,44 @@
-# Synthetic Data Flywheel
+# 🔄 Synthetic Data Flywheel
 
 **Made Autonomously Using [NEO - Your Autonomous AI Engineering Agent](https://heyneo.com)**
 
 [![VS Code Extension](https://img.shields.io/badge/VS%20Code-NEO%20Extension-blue?logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=NeoResearchInc.heyneo)
 [![Cursor Extension](https://img.shields.io/badge/Cursor-NEO%20Extension-blue?logo=cursor)](https://marketplace.cursorapi.com/items/?itemName=NeoResearchInc.heyneo)
 
----
+A closed-loop autonomous pipeline that generates synthetic training pairs from a base model, filters them using a local LLM judge, trains a new model, evaluates it, and feeds failure cases back as seeds for the next cycle — continuously improving without human labeling.
 
-## Overview
-
-A production-ready autonomous ML pipeline that generates synthetic training data, filters it with a local LLM judge, trains a new model, evaluates results, and automatically feeds failure cases back for continuous self-improvement — **zero human labeling required**.
-
-This closed-loop system implements the self-improving ML pipelines that frontier labs have been running internally. Each cycle produces measurably better models on your target task without manual intervention.
-
-## Key Features
-
-- **Autonomous Generation Loop**: Generates synthetic QA/instruction pairs using Qwen3 8B via OpenRouter
-- **Quality Filtering**: Local LLM judge (Gemma 4 E2B via Ollama) evaluates each generated example
-- **Unsloth Training**: Generates Colab-ready notebooks for efficient LoRA fine-tuning of Qwen3 4B
-- **Automatic Evaluation**: Tests trained model on held-out test sets and tracks improvement metrics
-- **Feedback Loop**: Extracts failure cases and uses them as seeds for the next generation cycle
-- **Checkpointing**: Resume cycles from saved state if interrupted
-- **A2A Agent Interface**: FastAPI server exposing A2A protocol endpoints for multi-agent orchestration
-- **Rich CLI**: Beautiful terminal UI with progress bars and metrics tables
-- **HTML Dashboard**: Per-cycle metrics visualization showing quality improvement over time
-
-## Architecture
+## 🏗️ Architecture
 
 ```
-Cycle N:
-┌─────────────────────────────────────────────────────────────┐
-│ 1. GENERATE                                                  │
-│    Qwen3 8B (OpenRouter) → Create synthetic training pairs  │
-├─────────────────────────────────────────────────────────────┤
-│ 2. FILTER                                                    │
-│    Gemma 4 E2B (Local, Ollama) → Quality scoring             │
-├─────────────────────────────────────────────────────────────┤
-│ 3. TRAIN                                                     │
-│    Unsloth + Qwen3 4B → Generate Colab notebook              │
-├─────────────────────────────────────────────────────────────┤
-│ 4. EVALUATE                                                  │
-│    Test on held-out set → Compute accuracy metrics           │
-├─────────────────────────────────────────────────────────────┤
-│ 5. EXTRACT FAILURES                                          │
-│    Identify low-performing examples → Seeds for Cycle N+1    │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Seeds     │────▶│  Generator  │────▶│   Judge     │
+│  (Prompts)  │     │(OpenRouter) │     │  (Ollama)   │
+└─────────────┘     └─────────────┘     └──────┬──────┘
+       ▲                                     │
+       │                                     ▼
+       │                              ┌─────────────┐
+       │                              │   Filter    │
+       │                              └──────┬──────┘
+       │                                     │
+       │                                     ▼
+       │                              ┌─────────────┐
+       │                              │   Dataset   │
+       │                              │   Manager   │
+       │                              └──────┬──────┘
+       │                                     │
+       │                                     ▼
+       │                              ┌─────────────┐
+       │                              │   Trainer   │
+       │                              │  (Unsloth)  │
+       │                              └──────┬──────┘
+       │                                     │
+       │                                     ▼
+       │                              ┌─────────────┐
+       │                              │  Evaluator  │
+       │                              └──────┬──────┘
+       │                                     │
+       └─────────────────────────────────────┘
+              (Failure Seeds Feedback Loop)
 ```
 
 ### Flywheel Cycle Visualization
@@ -135,214 +129,417 @@ Cycle N:
   </defs>
 </svg>
 
-## Installation
+## 📦 Installation
 
 ### Prerequisites
 
-- Python 3.11+
-- Ollama with Gemma 4 E2B model running locally
-- OpenRouter API key (for generation)
-- HuggingFace account (optional, for dataset hub integration)
+- Python 3.10+
+- [OpenRouter API key](https://openrouter.ai/keys) for generation
+- [Ollama](https://ollama.ai/) installed locally for judging
 
-### Setup
+### Install from Source
 
 ```bash
-# Clone or navigate to project directory
+git clone https://github.com/yourusername/synthetic-data-flywheel.git
 cd synthetic-data-flywheel
+pip install -e ".[dev]"
+```
 
-# Install in editable mode
-pip install -e .
+### Environment Setup
 
-# Configure environment
+Copy the example environment file and fill in your API keys:
+
+```bash
 cp .env.example .env
-# Edit .env and add your OpenRouter API key:
-# OPENROUTER_API_KEY=your_key_here
 ```
 
-### Start Ollama Judge
+Edit `.env` with your credentials:
 
-```bash
-# In a separate terminal, start Ollama with Gemma 4 E2B
-ollama run gemma4:e2b
+```env
+# OpenRouter (for generation)
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_MODEL=qwen/qwen3-8b
+
+# Ollama (for judging)
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=gemma4
+
+# HuggingFace (optional, for dataset upload)
+HF_TOKEN=your_hf_token_here
 ```
 
-## Usage
+## 🚀 Quick Start
 
-### CLI: Run the Flywheel
+### 1. Initialize the Flywheel
 
 ```bash
-# Basic: 3 cycles on sentiment classification task
-flywheel run --task sentiment --cycles 3 --output data/
+flywheel init
+```
 
-# With custom seed data
+### 2. Run the Flywheel
+
+```bash
+flywheel run --seeds "Explain quantum computing,Write a poem about AI,What is machine learning?"
+```
+
+### 3. Check Status
+
+```bash
+flywheel status
+```
+
+### 4. Generate Report
+
+```bash
+flywheel report
+```
+
+## 📖 Usage
+
+### CLI Commands
+
+```bash
+# Run with custom settings
 flywheel run \
-  --task sentiment \
-  --cycles 5 \
-  --seed-file data/initial_examples.json \
-  --output data/results/
+  --seeds "seed1,seed2,seed3" \
+  --max-cycles 5 \
+  --checkpoint-dir ./my-checkpoints
 
-# View available tasks
-flywheel list-tasks
+# Resume from checkpoint
+flywheel run --seeds "seed1" --resume
 
-# Check cycle progress
-flywheel status --output data/
+# Generate HTML report
+flywheel report --output ./reports
+
+# Show current status
+flywheel status --checkpoint-dir ./checkpoints
 ```
+
+### Data Platform Commands
+
+Beyond the flywheel loop, `flywheel` ships CLI subcommands for a full
+training-data workflow over *your own* data. The example below has been
+verified end-to-end against a local Ollama (`gemma4:latest`).
+
+```bash
+# 0) One-time
+flywheel init
+
+# 1) Ingest any dataset (JSONL / JSON / CSV / HF) into the tool's format.
+#    Exact duplicates collapse automatically (deterministic pair IDs).
+flywheel ingest --input my.jsonl --name toy --format jsonl \
+  --map instruction=prompt,output=completion
+
+# 2) Validate: schema, length, dedup, PII, language, profanity.
+#    --write-clean emits a filtered JSONL dropping errors + duplicates.
+flywheel validate --dataset toy --checks schema,length,pii,dedup \
+  --write-clean data/user/toy.clean.jsonl
+
+# 3) LLM-as-judge with pluggable backends + external YAML rubric.
+#    Backends: ollama | openrouter | anthropic.
+flywheel judge --dataset toy --rubric rubrics/default.yaml \
+  --backend ollama --model gemma4:latest --concurrency 2 --tag v1
+
+# 4) Label pairs — bulk expression, auto from judgments, or interactive TUI.
+flywheel label --dataset toy --mode auto-from-judge \
+  --judgments data/judgments/toy.v1.jsonl
+flywheel label --dataset toy --mode bulk \
+  --where "scores['overall'] >= 9" --set-status approved --tag high_quality \
+  --judgments data/judgments/toy.v1.jsonl
+flywheel label --dataset toy --mode interactive --resume
+
+# 5) Inspect + export (with filter expression + train/val split).
+flywheel dataset ls
+flywheel dataset info toy
+flywheel dataset export toy --to data/exports/train.jsonl \
+  --filter "label['status'] == 'approved'" --split train=0.8,val=0.2
+
+# 6) Visualize — render PNG charts + an index.html for the dataset.
+flywheel visualize --dataset toy --output reports/toy
+
+# 7) Run two judges, compare, and calibrate against labels.
+flywheel judge    --dataset toy --backend ollama      --tag ollama
+flywheel judge    --dataset toy --backend openrouter  --tag openrouter
+flywheel compare  --dataset toy --tags ollama,openrouter
+flywheel calibrate --dataset toy --tag ollama         # vs label.status=='approved'
+
+# 8) Reproducible pipeline — one YAML, one command.
+flywheel pipeline run pipeline.yaml
+```
+
+### Judge sharpness
+
+- **Judgment cache.** Every call is keyed on
+  `sha256(pair_id + rubric.name + rubric.version + backend + model)` and
+  written to `data/judgments/.cache/`. Re-running a judge is instant and
+  free. Disable per call with `--no-cache`.
+- **`flywheel compare -d <ds> --tags a,b`.** Computes Cohen's κ on
+  pass/fail, pass-agreement %, and Pearson correlation on overall scores
+  between two judgment runs. Writes `reports/<ds>/compare.json`.
+- **`flywheel calibrate -d <ds> --tag <t>`.** Treats `label.status ==
+  'approved'` as ground truth and reports precision / recall / F1 / accuracy
+  for the judge's `passed` decision. Writes `reports/<ds>/calibrate.<t>.json`.
+
+### Pipeline YAML
+
+`flywheel pipeline run <config.yaml>` runs steps in order, reusing the
+same CLI logic so behaviour matches manual runs 1:1. Supported step
+names: `ingest | validate | judge | label | export | visualize | compare
+| calibrate`. `judgments: auto` in `label` / `export` resolves to the
+previous `judge` step's tag, so you rarely need to spell paths out.
+
+```yaml
+dataset: toy
+steps:
+  - ingest:
+      input: toy.jsonl
+      format: jsonl
+      map: {instruction: prompt, output: completion}
+  - validate:
+      checks: [schema, dedup, pii, length]
+      fail_on: never
+      write_clean: true
+  - judge:
+      backend: ollama
+      model: gemma4:latest
+      tag: v1
+      max_pairs: 10
+      concurrency: 2
+  - label:
+      mode: auto-from-judge
+      judgments: auto
+  - export:
+      to: data/exports/toy.jsonl
+      filter: "label['status'] == 'approved'"
+      split: {train: 0.8, val: 0.2}
+  - visualize: {}
+```
+
+Steps stop on the first non-zero exit by default; pass `--keep-going` to
+continue.
+
+### Visualizations
+
+`flywheel visualize -d <dataset>` reads the dataset's pairs, judgments,
+labels and validation report and renders a chart suite under
+`reports/<dataset>/` (override with `--output`):
+
+| file | chart | what it shows |
+| --- | --- | --- |
+| `categories.png` | horizontal bar | pair counts per `category` |
+| `lengths.png` | side-by-side histograms | char lengths of instruction + output |
+| `validation.png` | horizontal bar | issue counts per validation check |
+| `pass_fail.png` | bar | judge pass vs fail totals |
+| `scores.png` | histogram | overall-score distribution (0-10) |
+| `criteria.png` | bar | mean coherence / accuracy / helpfulness / overall |
+| `labels.png` | bar | label distribution (approved / needs_edit / rejected / skipped), latest-wins per pair |
+| `judge_agreement.png` | 2×2 heatmap | pass/fail agreement between two judgment tags — rendered only when ≥2 `--tag` runs exist for the dataset |
+| `index.html` | gallery | all charts on one page with a summary row |
+
+**Rubrics** are YAML files under `rubrics/` — see `rubrics/default.yaml` and
+`rubrics/factuality.yaml`. `--rubric` is optional; if omitted the tool uses
+`rubrics/default.yaml` when present.
+
+**Judge backends** (`src/synthetic_data_flywheel/judge_backends/`) all
+implement a common async `JudgeBackend` protocol:
+
+| backend | required env | default model |
+| --- | --- | --- |
+| `ollama` | local server on `OLLAMA_BASE_URL` (default `http://localhost:11434`) | `ollama_model` setting |
+| `openrouter` | `OPENROUTER_API_KEY` | `openrouter_model` setting |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` |
+
+**Bulk-label / export filter expressions** are evaluated in a restricted
+sandbox over `{instruction, output, category, difficulty, metadata, scores,
+passed, judge_model, label}`. Only literals, comparisons, boolean ops and
+subscripts are allowed — attribute access, function calls and dunders are
+rejected.
+
+**Timeouts**: local 7–8B judge models (e.g. Gemma) can take 30–90 s per
+call, so the default `judge_timeout` is 180 s. Bump it via env
+(`JUDGE_TIMEOUT=300`) if you see `ReadTimeout` in the judge summary's
+"Failed (errors)" row.
+
+On-disk layout (added by these commands):
+
+```
+data/
+  user/        <ds>.jsonl    <ds>.meta.json
+  validation/  <ds>.report.json
+  labels/      <ds>.jsonl                     # append-only, latest-wins
+  judgments/   <ds>.<tag>.jsonl
+rubrics/       default.yaml  factuality.yaml
+```
+
+The original `flywheel run | status | report | init` flywheel-loop commands
+are unchanged.
 
 ### Python API
 
 ```python
-from synthetic_data_flywheel import Engine, GeneratorConfig, JudgeConfig
+import asyncio
+from synthetic_data_flywheel import create_engine
 
-# Create engine with custom config
-engine = Engine(
-    generator_model="qwen/qwen3-8b",
-    judge_model="gemma4:e2b",
-    task="sentiment",
+# Create engine with seeds
+engine = create_engine(
+    seeds=["Explain Python", "What is AI?"],
+    max_cycles=3,
 )
 
-# Run flywheel for 3 cycles
-results = engine.run_cycles(
-    num_cycles=3,
-    examples_per_cycle=100,
-    quality_threshold=0.8,
-)
+# Run the flywheel
+asyncio.run(engine.run_full_loop())
 
-# Access results
-for cycle in results:
-    print(f"Cycle {cycle.number}: Accuracy {cycle.accuracy:.2%}")
+# Get summary
+summary = engine.get_summary()
+print(f"Generated {summary['total_passed_pairs']} pairs")
 ```
 
-### A2A Agent Server
+### A2A Agent (Multi-Agent Orchestration)
+
+Start the A2A agent server:
 
 ```bash
-# Start agent server (runs on port 8000)
 python -m synthetic_data_flywheel.a2a_agent
-
-# In another session, query it
-curl -X POST http://localhost:8000/v1/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"task_type": "flywheel", "cycles": 3, "task": "qa"}'
 ```
 
-## Models (April 2026)
+Or use the FastAPI app directly:
 
-| Component | Model | Provider | Runtime |
-|-----------|-------|----------|---------|
-| **Generator** | Qwen3 8B | OpenRouter | API-based |
-| **Student** | Qwen3 4B | Unsloth (Local) | Colab GPU |
-| **Judge** | Gemma 4 E2B | Ollama (Local) | CPU-friendly |
+```python
+from synthetic_data_flywheel.a2a_agent import create_a2a_app
+import uvicorn
 
-## Project Structure
+app = create_a2a_app()
+uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+#### A2A Protocol Endpoints
+
+- `GET /a2a/capabilities` - Get agent capabilities
+- `POST /a2a/tasks/send` - Send a task to the agent
+- `POST /a2a/tasks/get` - Get task status and result
+- `POST /a2a/tasks/cancel` - Cancel a running task
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+pytest tests/ -v
+```
+
+Run with coverage:
+
+```bash
+pytest tests/ --cov=synthetic_data_flywheel --cov-report=html
+```
+
+## 📁 Project Structure
 
 ```
 synthetic-data-flywheel/
 ├── src/synthetic_data_flywheel/
-│   ├── __init__.py
-│   ├── config.py              # Configuration & settings
-│   ├── models.py              # Pydantic data models
-│   ├── generator.py           # Synthetic data generation
-│   ├── judge.py               # Quality filtering & scoring
-│   ├── dataset_manager.py     # HuggingFace dataset handling
-│   ├── trainer.py             # Notebook generation & training
-│   ├── evaluator.py           # Model evaluation
-│   ├── engine.py              # Main orchestration loop
-│   ├── cli.py                 # Click CLI interface
-│   ├── a2a_agent.py           # A2A protocol server
-│   └── report_generator.py    # HTML metrics dashboard
-├── tests/                     # 15+ unit tests
-├── data/                      # Example datasets
-├── notebooks/                 # Generated Colab notebooks
-├── templates/                 # Jinja2 HTML templates
-├── pyproject.toml
-├── .env.example
-└── README.md
+│   ├── __init__.py          # Package exports
+│   ├── config.py            # Configuration management
+│   ├── models.py            # Pydantic data models
+│   ├── generator.py         # OpenRouter client
+│   ├── judge.py             # Ollama client
+│   ├── dataset_manager.py   # HuggingFace datasets
+│   ├── trainer.py           # Unsloth notebook generation
+│   ├── evaluator.py         # Metrics computation
+│   ├── engine.py            # Main flywheel loop
+│   ├── cli.py               # Command-line interface
+│   ├── a2a_agent.py         # A2A protocol server
+│   └── report_generator.py  # HTML report generation
+├── tests/                   # Unit tests
+├── data/                    # Data directory
+├── docs/                    # Documentation
+├── notebooks/               # Jupyter notebooks
+├── reports/                 # Generated reports
+├── templates/               # Jinja2 templates
+├── pyproject.toml          # Project configuration
+├── .env.example            # Environment template
+└── README.md               # This file
 ```
 
-## Testing
+## ⚙️ Configuration
 
-```bash
-# Run all tests
-pytest tests/ -v
+All configuration is managed through environment variables or `.env` file:
 
-# Run with coverage
-pytest tests/ --cov=src/synthetic_data_flywheel
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPENROUTER_API_KEY` | OpenRouter API key | Required |
+| `OPENROUTER_MODEL` | Model for generation | `qwen/qwen3-8b` |
+| `OLLAMA_HOST` | Ollama server URL | `http://localhost:11434` |
+| `OLLAMA_MODEL` | Model for judging | `gemma4` |
+| `QUALITY_MIN_SCORE` | Minimum quality threshold | `7.0` |
+| `MAX_CYCLES` | Maximum flywheel cycles | `5` |
+| `HF_TOKEN` | HuggingFace token | Optional |
 
-# Run specific test file
-pytest tests/test_generator.py -v
+## 🔧 Advanced Usage
+
+### Custom Prompt Templates
+
+```python
+from synthetic_data_flywheel.generator import PromptTemplate
+
+# Use built-in templates
+template = PromptTemplate.get("REASONING")
+
+# Or create custom
+custom_template = """Based on: {seed}
+
+Generate a step-by-step reasoning problem with solution."""
 ```
 
-## Output Artifacts
+### Custom Quality Rubric
 
-### Per-Cycle Outputs
+```python
+from synthetic_data_flywheel.judge import QualityJudge
 
-- `cycle_N_training_data.json` — Filtered training examples
-- `cycle_N_model.ipynb` — Colab-ready Unsloth notebook
-- `cycle_N_eval_results.json` — Evaluation metrics
-- `cycle_N_failures.json` — Low-scoring examples for next cycle
-
-### Dashboard
-
-- `metrics_report.html` — Interactive per-cycle metrics visualization
-- `summary.json` — Final results and statistics
-
-## Configuration
-
-Edit `.env` to customize:
-
-```bash
-# Generation (OpenRouter)
-OPENROUTER_API_KEY=your_key
-OPENROUTER_MODEL=qwen/qwen3-8b
-
-# Judging (Ollama local)
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma4:e2b
-
-# Quality thresholds
-QUALITY_MIN_SCORE=7.0
-QUALITY_MIN_ACCURACY=6.0
+judge = QualityJudge()
+# Modify QUALITY_RUBRIC_TEMPLATE in judge.py for custom criteria
 ```
 
-## Benchmarks
+### Dataset Versioning
 
-Example improvement trajectory (sentiment classification task):
+```python
+from synthetic_data_flywheel.dataset_manager import create_dataset_manager
 
-| Cycle | Accuracy | Coverage | Quality |
-|-------|----------|----------|---------|
-| 1     | 78%      | 95%      | 7.2    |
-| 2     | 82%      | 98%      | 7.8    |
-| 3     | 85%      | 99%      | 8.1    |
+dm = create_dataset_manager()
 
-*Results on 500-example held-out test set. Actual results depend on task complexity and seed data quality.*
+# Save to HuggingFace Hub
+dm.save_to_huggingface(pairs, repo_id="username/dataset-name")
 
-## MCP Integration
-
-Use as an MCP tool inside Claude Code or other MCP clients. The project exposes generation, judging, and evaluation as callable tools.
-
-## Troubleshooting
-
-### "Connection refused" (Ollama)
-```bash
-# Make sure Ollama is running
-ollama serve
-# In another terminal
-ollama run gemma4:e2b
+# Load from HuggingFace Hub
+pairs = dm.load_from_huggingface("username/dataset-name")
 ```
 
-### "OpenRouter API key invalid"
-- Check `.env` file has correct `OPENROUTER_API_KEY`
-- Verify key at https://openrouter.ai/keys
+## 📊 Metrics
 
-### Out of memory during training
-- Reduce `examples_per_cycle` in config
-- Use Qwen3 4B instead of larger models
+The flywheel tracks:
 
-## License
+- **Pass Rate**: Percentage of pairs passing quality judgment
+- **Quality Scores**: Coherence, accuracy, helpfulness (0-10)
+- **Cycle Duration**: Time per flywheel cycle
+- **Total Generated**: Cumulative synthetic pairs
 
-MIT
+View metrics in generated HTML reports or via `flywheel status`.
 
-## Credits
+## 🤝 Contributing
 
-Built with [NEO](https://heyneo.com) — Your Autonomous AI Engineering Agent
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing`)
+5. Open a Pull Request
 
-See the [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=NeoResearchInc.heyneo) or [Cursor Extension](https://marketplace.cursorapi.com/items/?itemName=NeoResearchInc.heyneo).
+## 📄 License
+
+MIT License - see LICENSE file for details.
+
+## 🙏 Acknowledgments
+
+- [OpenRouter](https://openrouter.ai/) for LLM API access
+- [Ollama](https://ollama.ai/) for local LLM inference
+- [Unsloth](https://github.com/unslothai/unsloth) for efficient fine-tuning
+- [HuggingFace](https://huggingface.co/) for dataset hosting

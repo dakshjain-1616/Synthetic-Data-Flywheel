@@ -5,190 +5,101 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import structlog
 from jinja2 import Template
 
 from synthetic_data_flywheel.config import get_settings
 from synthetic_data_flywheel.models import CycleState
 
-logger = structlog.get_logger()
 
-
-# HTML Template for Flywheel Report
-HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
+HTML_REPORT_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Synthetic Data Flywheel Report</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            padding: 20px;
+            padding: 2rem;
         }
-        
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
         }
-        
         header {
             text-align: center;
             color: white;
-            padding: 40px 0;
+            margin-bottom: 2rem;
         }
-        
-        header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .stat-card {
+        h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .subtitle { opacity: 0.9; font-size: 1.1rem; }
+        .card {
             background: white;
             border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            transition: transform 0.2s;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
         }
-        
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
         }
-        
-        .stat-card h3 {
-            color: #666;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 8px;
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
         }
-        
-        .stat-value {
+        .metric-value {
             font-size: 2.5rem;
             font-weight: bold;
-            color: #333;
+            margin-bottom: 0.5rem;
         }
-        
-        .stat-card.passed .stat-value { color: #10b981; }
-        .stat-card.failed .stat-value { color: #ef4444; }
-        .stat-card.total .stat-value { color: #3b82f6; }
-        
-        .charts-section {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+        .metric-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
         }
-        
-        .chart-card {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        
-        .chart-card h3 {
-            margin-bottom: 20px;
-            color: #333;
-        }
-        
-        .cycles-table {
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            overflow-x: auto;
-        }
-        
         table {
             width: 100%;
             border-collapse: collapse;
+            margin-top: 1rem;
         }
-        
         th, td {
-            padding: 12px;
+            padding: 0.75rem;
             text-align: left;
-            border-bottom: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e0e0e0;
         }
-        
         th {
-            background: #f9fafb;
+            background: #f5f5f5;
             font-weight: 600;
-            color: #374151;
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.5px;
+            color: #333;
         }
-        
-        tr:hover {
-            background: #f9fafb;
+        tr:hover { background: #f9f9f9; }
+        .pass-rate { font-weight: bold; }
+        .pass-rate.high { color: #4caf50; }
+        .pass-rate.medium { color: #ff9800; }
+        .pass-rate.low { color: #f44336; }
+        .chart-container {
+            height: 300px;
+            margin-top: 1rem;
         }
-        
-        .status-badge {
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
+        h2 {
+            color: #333;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #667eea;
         }
-        
-        .status-completed {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        
-        .status-failed {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-        
-        .status-pending {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: #e5e7eb;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #10b981, #34d399);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-        
-        footer {
+        .timestamp {
             text-align: center;
             color: white;
-            padding: 20px;
             opacity: 0.8;
+            margin-top: 2rem;
         }
     </style>
 </head>
@@ -196,294 +107,229 @@ HTML_REPORT_TEMPLATE = """<!DOCTYPE html>
     <div class="container">
         <header>
             <h1>🔄 Synthetic Data Flywheel</h1>
-            <p>Generated on {{ generated_at }}</p>
+            <p class="subtitle">Training Data Generation Report</p>
         </header>
         
-        <div class="stats-grid">
-            <div class="stat-card total">
-                <h3>Total Cycles</h3>
-                <div class="stat-value">{{ total_cycles }}</div>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value">{{ total_cycles }}</div>
+                <div class="metric-label">Total Cycles</div>
             </div>
-            <div class="stat-card total">
-                <h3>Total Samples Generated</h3>
-                <div class="stat-value">{{ total_samples }}</div>
+            <div class="metric-card">
+                <div class="metric-value">{{ total_passed }}</div>
+                <div class="metric-label">Passed Pairs</div>
             </div>
-            <div class="stat-card passed">
-                <h3>Samples Passed</h3>
-                <div class="stat-value">{{ samples_passed }}</div>
+            <div class="metric-card">
+                <div class="metric-value">{{ avg_pass_rate }}%</div>
+                <div class="metric-label">Avg Pass Rate</div>
             </div>
-            <div class="stat-card failed">
-                <h3>Overall Pass Rate</h3>
-                <div class="stat-value">{{ "%.1f"|format(pass_rate * 100) }}%</div>
-            </div>
-        </div>
-        
-        <div class="charts-section">
-            <div class="chart-card">
-                <h3>Pass Rate per Cycle</h3>
-                <canvas id="passRateChart"></canvas>
-            </div>
-            <div class="chart-card">
-                <h3>Average Quality Score per Cycle</h3>
-                <canvas id="qualityChart"></canvas>
+            <div class="metric-card">
+                <div class="metric-value">{{ avg_quality }}</div>
+                <div class="metric-label">Avg Quality Score</div>
             </div>
         </div>
         
-        <div class="cycles-table">
-            <h3>Cycle Details</h3>
+        <div class="card">
+            <h2>📊 Cycle History</h2>
             <table>
                 <thead>
                     <tr>
                         <th>Cycle</th>
-                        <th>Status</th>
-                        <th>Generated</th>
-                        <th>Passed</th>
                         <th>Pass Rate</th>
                         <th>Avg Quality</th>
                         <th>Duration (s)</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for cycle in cycles %}
                     <tr>
-                        <td>{{ cycle.cycle_id }}</td>
-                        <td><span class="status-badge status-{{ cycle.status }}">{{ cycle.status }}</span></td>
-                        <td>{{ cycle.generated_count }}</td>
-                        <td>{{ cycle.passed_count }}</td>
-                        <td>
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: {{ cycle.pass_rate * 100 }}%"></div>
-                            </div>
-                            {{ "%.1f"|format(cycle.pass_rate * 100) }}%
-                        </td>
-                        <td>{{ "%.2f"|format(cycle.avg_quality) }}</td>
-                        <td>{{ "%.0f"|format(cycle.duration) if cycle.duration else "N/A" }}</td>
+                        <td>#{{ cycle.cycle_id }}</td>
+                        <td class="pass-rate {{ cycle.pass_rate_class }}">{{ cycle.pass_rate }}%</td>
+                        <td>{{ cycle.avg_quality }}</td>
+                        <td>{{ cycle.duration }}</td>
+                        <td>{{ cycle.status }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
         
-        <footer>
-            <p>Synthetic Data Flywheel v0.1.0 | Report generated automatically</p>
-        </footer>
+        <div class="card">
+            <h2>📈 Quality Metrics per Cycle</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cycle</th>
+                        <th>Coherence</th>
+                        <th>Accuracy</th>
+                        <th>Helpfulness</th>
+                        <th>Overall</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cycle in cycles %}
+                    <tr>
+                        <td>#{{ cycle.cycle_id }}</td>
+                        <td>{{ cycle.coherence }}</td>
+                        <td>{{ cycle.accuracy }}</td>
+                        <td>{{ cycle.helpfulness }}</td>
+                        <td><strong>{{ cycle.overall }}</strong></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="card">
+            <h2>🎯 Summary Statistics</h2>
+            <table>
+                <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                </tr>
+                <tr>
+                    <td>Total Generated Pairs</td>
+                    <td>{{ total_generated }}</td>
+                </tr>
+                <tr>
+                    <td>Total Passed Pairs</td>
+                    <td>{{ total_passed }}</td>
+                </tr>
+                <tr>
+                    <td>Total Failed Pairs</td>
+                    <td>{{ total_failed }}</td>
+                </tr>
+                <tr>
+                    <td>Average Pass Rate</td>
+                    <td>{{ avg_pass_rate }}%</td>
+                </tr>
+                <tr>
+                    <td>Best Cycle</td>
+                    <td>#{{ best_cycle }}</td>
+                </tr>
+            </table>
+        </div>
     </div>
     
-    <script>
-        const cycleLabels = {{ cycle_labels | safe }};
-        const passRates = {{ pass_rates | safe }};
-        const qualityScores = {{ quality_scores | safe }};
-        
-        // Pass Rate Chart
-        new Chart(document.getElementById('passRateChart'), {
-            type: 'line',
-            data: {
-                labels: cycleLabels,
-                datasets: [{
-                    label: 'Pass Rate',
-                    data: passRates,
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    tension: 0.4,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 1,
-                        ticks: {
-                            callback: function(value) {
-                                return (value * 100).toFixed(0) + '%';
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        
-        // Quality Score Chart
-        new Chart(document.getElementById('qualityChart'), {
-            type: 'line',
-            data: {
-                labels: cycleLabels,
-                datasets: [{
-                    label: 'Avg Quality',
-                    data: qualityScores,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    tension: 0.4,
-                    fill: true
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 10
-                    }
-                }
-            }
-        });
-    </script>
+    <p class="timestamp">Generated on {{ generated_at }}</p>
 </body>
-</html>"""
+</html>'''
 
 
 class ReportGenerator:
-    """Generator for HTML reports with metrics visualization."""
+    """Generator for HTML reports."""
     
     def __init__(self, output_dir: Optional[str] = None):
-        """Initialize report generator.
-        
-        Args:
-            output_dir: Output directory for reports
-        """
+        """Initialize report generator."""
         settings = get_settings()
         self.output_dir = Path(output_dir or settings.report_output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.template = Template(HTML_REPORT_TEMPLATE)
-        
-        logger.info(
-            "report_generator_initialized",
-            output_dir=str(self.output_dir),
-        )
     
-    def _prepare_cycle_data(self, cycles: List[CycleState]) -> List[Dict[str, Any]]:
-        """Prepare cycle data for template."""
-        cycle_data = []
-        for cycle in cycles:
-            generated = len(cycle.generated_pairs)
-            passed = sum(1 for j in cycle.judgments if j.passed) if cycle.judgments else 0
-            
-            data = {
-                "cycle_id": cycle.cycle_id,
-                "status": cycle.status,
-                "generated_count": generated,
-                "passed_count": passed,
-                "pass_rate": cycle.pass_rate,
-                "avg_quality": cycle.avg_quality_score,
-                "duration": cycle.duration_seconds,
-            }
-            cycle_data.append(data)
-        
-        return cycle_data
-    
-    def generate_flywheel_report(
+    def generate_report(
         self,
         cycles: List[CycleState],
-        output_path: Optional[Path] = None,
+        filename: Optional[str] = None,
     ) -> Path:
-        """Generate comprehensive flywheel report.
+        """Generate HTML report from cycle data."""
+        if not cycles:
+            raise ValueError("No cycles to report on")
         
-        Args:
-            cycles: List of completed cycles
-            output_path: Optional output path
-            
-        Returns:
-            Path to generated report
-        """
-        if output_path is None:
-            output_path = self.output_dir / f"flywheel_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-        
-        # Calculate statistics
+        # Calculate summary statistics
         total_cycles = len(cycles)
-        total_samples = sum(len(c.generated_pairs) for c in cycles)
-        samples_passed = sum(
-            sum(1 for j in c.judgments if j.passed)
-            for c in cycles if c.judgments
-        )
-        pass_rate = samples_passed / total_samples if total_samples else 0.0
+        total_passed = sum(len(c.passed_pairs) for c in cycles)
+        total_generated = sum(len(c.generated_pairs) for c in cycles)
+        total_failed = total_generated - total_passed
         
-        # Prepare chart data
-        cycle_labels = [str(c.cycle_id) for c in cycles]
-        pass_rates = [c.pass_rate for c in cycles]
-        quality_scores = [c.avg_quality_score for c in cycles]
+        avg_pass_rate = sum(c.pass_rate for c in cycles) / len(cycles) * 100
+        avg_quality = sum(c.avg_quality_score for c in cycles) / len(cycles)
         
-        # Prepare cycle data
-        cycle_data = self._prepare_cycle_data(cycles)
+        # Find best cycle
+        best_cycle = max(cycles, key=lambda c: c.pass_rate).cycle_id
+        
+        # Prepare cycle data for template
+        cycle_data = []
+        for c in cycles:
+            pass_rate = c.pass_rate * 100
+            
+            # Determine pass rate class
+            if pass_rate >= 70:
+                pass_rate_class = "high"
+            elif pass_rate >= 40:
+                pass_rate_class = "medium"
+            else:
+                pass_rate_class = "low"
+            
+            # Get quality scores from eval_metrics
+            eval_metrics = c.eval_metrics or {}
+            
+            cycle_data.append({
+                "cycle_id": c.cycle_id,
+                "pass_rate": f"{pass_rate:.1f}",
+                "pass_rate_class": pass_rate_class,
+                "avg_quality": f"{c.avg_quality_score:.2f}",
+                "duration": int(c.timing.get("duration_seconds", 0)),
+                "status": c.status,
+                "coherence": f"{eval_metrics.get('avg_coherence', 0):.2f}",
+                "accuracy": f"{eval_metrics.get('avg_accuracy', 0):.2f}",
+                "helpfulness": f"{eval_metrics.get('avg_helpfulness', 0):.2f}",
+                "overall": f"{eval_metrics.get('avg_overall', 0):.2f}",
+            })
         
         # Render template
-        html = self.template.render(
-            generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        template = Template(HTML_REPORT_TEMPLATE)
+        html = template.render(
             total_cycles=total_cycles,
-            total_samples=total_samples,
-            samples_passed=samples_passed,
-            pass_rate=pass_rate,
+            total_passed=total_passed,
+            total_generated=total_generated,
+            total_failed=total_failed,
+            avg_pass_rate=f"{avg_pass_rate:.1f}",
+            avg_quality=f"{avg_quality:.2f}",
+            best_cycle=best_cycle,
             cycles=cycle_data,
-            cycle_labels=json.dumps(cycle_labels),
-            pass_rates=json.dumps(pass_rates),
-            quality_scores=json.dumps(quality_scores),
+            generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         )
         
-        # Write report
-        with open(output_path, "w") as f:
+        # Save report
+        if filename is None:
+            filename = f"flywheel_report_{datetime.utcnow():%Y%m%d_%H%M%S}.html"
+        
+        report_path = self.output_dir / filename
+        with open(report_path, "w") as f:
             f.write(html)
         
-        logger.info(
-            "flywheel_report_generated",
-            path=str(output_path),
-            cycles=total_cycles,
-            samples=total_samples,
-        )
-        
-        return output_path
+        return report_path
     
-    def generate_cycle_report(
-        self,
-        cycle: CycleState,
-        output_path: Optional[Path] = None,
-    ) -> Path:
-        """Generate report for a single cycle.
-        
-        Args:
-            cycle: Cycle state to report on
-            output_path: Optional output path
-            
-        Returns:
-            Path to generated report
-        """
-        if output_path is None:
-            output_path = self.output_dir / f"cycle_{cycle.cycle_id:03d}_report.html"
-        
-        # Generate single-cycle report using same template
-        return self.generate_flywheel_report([cycle], output_path)
-    
-    def generate_comparison_report(
+    def generate_json_report(
         self,
         cycles: List[CycleState],
-        output_path: Optional[Path] = None,
+        filename: Optional[str] = None,
     ) -> Path:
-        """Generate comparison report across cycles.
+        """Generate JSON report from cycle data."""
+        if not cycles:
+            raise ValueError("No cycles to report on")
         
-        Args:
-            cycles: List of cycles to compare
-            output_path: Optional output path
-            
-        Returns:
-            Path to generated report
-        """
-        if len(cycles) < 2:
-            raise ValueError("Need at least 2 cycles for comparison")
+        data = {
+            "generated_at": datetime.utcnow().isoformat(),
+            "summary": {
+                "total_cycles": len(cycles),
+                "total_passed_pairs": sum(len(c.passed_pairs) for c in cycles),
+                "avg_pass_rate": sum(c.pass_rate for c in cycles) / len(cycles),
+                "avg_quality_score": sum(c.avg_quality_score for c in cycles) / len(cycles),
+            },
+            "cycles": [c.to_dict() for c in cycles],
+        }
         
-        if output_path is None:
-            output_path = self.output_dir / f"comparison_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        if filename is None:
+            filename = f"flywheel_report_{datetime.utcnow():%Y%m%d_%H%M%S}.json"
         
-        # Use same template for now (could be extended)
-        return self.generate_flywheel_report(cycles, output_path)
+        report_path = self.output_dir / filename
+        with open(report_path, "w") as f:
+            json.dump(data, f, indent=2)
+        
+        return report_path
 
 
 def create_report_generator(output_dir: Optional[str] = None) -> ReportGenerator:
-    """Factory function to create a report generator.
-    
-    Args:
-        output_dir: Output directory for reports
-        
-    Returns:
-        Configured ReportGenerator
-    """
+    """Factory function to create a report generator."""
     return ReportGenerator(output_dir=output_dir)

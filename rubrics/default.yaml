@@ -1,0 +1,24 @@
+name: default
+version: 1
+description: General instruction/response quality — coherence, accuracy, helpfulness.
+criteria:
+  - {id: coherence, scale: [0, 10]}
+  - {id: accuracy, scale: [0, 10]}
+  - {id: helpfulness, scale: [0, 10]}
+pass_condition: "overall >= 7 and coherence >= 6 and accuracy >= 6 and helpfulness >= 6"
+temperature_override: 0.3
+prompt_template: |
+  Evaluate this instruction-response pair.
+
+  INSTRUCTION:
+  {{ pair.instruction }}
+
+  RESPONSE:
+  {{ pair.output[:2000] }}
+
+  Rate 0-10 on coherence, accuracy, helpfulness. Return JSON:
+  {"coherence": X, "accuracy": X, "helpfulness": X, "overall": X,
+   "passed": true, "reasoning": "brief"}
+output_schema:
+  type: object
+  required: [coherence, accuracy, helpfulness, overall]
