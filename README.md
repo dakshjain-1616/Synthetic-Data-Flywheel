@@ -1,5 +1,11 @@
 # Synthetic Data Flywheel
 
+> Built autonomously using **[NEO - Your Autonomous AI Engineering Agent](https://heyneo.com)**
+
+[![VS Code Extension](https://img.shields.io/visual-studio-marketplace/v/NeoResearchInc.heyneo?label=VS%20Code&logo=visualstudiocode&logoColor=white&color=0078d4)](https://marketplace.visualstudio.com/items?itemName=NeoResearchInc.heyneo) [![Cursor Extension](https://img.shields.io/badge/Cursor-Extension-black?logo=cursor&logoColor=white)](https://marketplace.cursorapi.com/items/?itemName=NeoResearchInc.heyneo)
+
+---
+
 A closed-loop pipeline for generating, filtering, labeling, and exporting synthetic instruction-tuning data - with an LLM-as-judge filter, statistical judge calibration, and an A2A-protocol agent surface for multi-agent orchestration.
 
 You bring seed prompts (or an existing dataset). The flywheel generates candidate pairs, scores them with a local or remote judge, calibrates the judge against human labels, exports clean training data, and optionally hands the filtered set to Unsloth for fine-tuning on a free Colab GPU. Failure cases from one cycle become seeds for the next.
